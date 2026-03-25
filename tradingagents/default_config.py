@@ -8,6 +8,7 @@ DEFAULT_CONFIG = {
         os.path.abspath(os.path.join(os.path.dirname(__file__), ".")),
         "dataflows/data_cache",
     ),
+    "market_profile": "us_equity",
     # LLM settings
     "llm_provider": "openai",
     "deep_think_llm": "o4-mini",
@@ -18,16 +19,12 @@ DEFAULT_CONFIG = {
     "max_risk_discuss_rounds": 1,
     "max_recur_limit": 100,
     # Data vendor configuration
-    # Category-level configuration (default for all tools in category)
     "data_vendors": {
-        "core_stock_apis": "yfinance",       # Options: yfinance, alpha_vantage, local
-        "technical_indicators": "yfinance",  # Options: yfinance, alpha_vantage, local
-        "fundamental_data": "alpha_vantage", # Options: openai, alpha_vantage, local
-        "news_data": "alpha_vantage",        # Options: openai, alpha_vantage, google, local
+        "core_stock_apis": "yfinance",       # Options: yfinance, alpha_vantage, akshare, local
+        "technical_indicators": "yfinance",  # Options: yfinance, alpha_vantage, akshare, local
+        "fundamental_data": "alpha_vantage", # Options: openai, alpha_vantage, akshare, local
+        "news_data": "alpha_vantage",        # Options: openai, alpha_vantage, google, local, china_news
     },
     # Tool-level configuration (takes precedence over category-level)
-    "tool_vendors": {
-        # Example: "get_stock_data": "alpha_vantage",  # Override category default
-        # Example: "get_news": "openai",               # Override category default
-    },
+    "tool_vendors": {},
 }

@@ -1,0 +1,19 @@
+{
+  "config_path": "local_ollama_config.json",
+  "results_dir": "./results",
+  "last_output_dir": "results/600519.SH/2026-03-25/visual_app_20260325_111201",
+  "market_profile": "cn_a_share",
+  "ticker": "600519.SH",
+  "trade_date": "2026-03-25",
+  "llm_provider": "ollama",
+  "backend_url": "http://localhost:11434/v1",
+  "quick_model": "qwen3:14b",
+  "deep_model": "qwen3:14b",
+  "embedding_model": "nomic-embed-text",
+  "research_depth": 1,
+  "selected_analysts": [
+    "market",
+    "news",
+    "fundamentals"
+  ]
+}

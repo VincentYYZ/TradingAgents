@@ -1,5 +1,6 @@
 from langchain_core.tools import tool
 from typing import Annotated
+import time
 from tradingagents.dataflows.interface import route_to_vendor
 
 @tool
@@ -20,4 +21,15 @@ def get_indicators(
     Returns:
         str: A formatted dataframe containing the technical indicators for the specified ticker symbol and indicator.
     """
-    return route_to_vendor("get_indicators", symbol, indicator, curr_date, look_back_days)
+    last_error = None
+    for attempt in range(3):
+        try:
+            return route_to_vendor("get_indicators", symbol, indicator, curr_date, look_back_days)
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(1.0 + attempt)
+    return (
+        f"Technical indicator '{indicator}' is temporarily unavailable for symbol '{symbol}' up to {curr_date}. "
+        f"Reason: {last_error}"
+    )

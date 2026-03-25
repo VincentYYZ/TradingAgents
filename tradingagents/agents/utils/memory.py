@@ -1,3 +1,5 @@
+import os
+
 import chromadb
 from chromadb.config import Settings
 from openai import OpenAI
@@ -6,23 +8,45 @@ from openai import OpenAI
 class FinancialSituationMemory:
     def __init__(self, name, config):
         if config["backend_url"] == "http://localhost:11434/v1":
-            self.embedding = "nomic-embed-text"
+            self.embedding = config.get("embedding_model", "nomic-embed-text")
         else:
-            self.embedding = "text-embedding-3-small"
-        self.client = OpenAI(base_url=config["backend_url"])
+            self.embedding = config.get("embedding_model", "text-embedding-3-small")
+        self.client = OpenAI(
+            base_url=config["backend_url"],
+            api_key=os.getenv("OPENAI_API_KEY", "ollama"),
+        )
         self.chroma_client = chromadb.Client(Settings(allow_reset=True))
-        self.situation_collection = self.chroma_client.create_collection(name=name)
+        self.situation_collection = self.chroma_client.get_or_create_collection(name=name)
+        self.enabled = True
+        self._warned = False
+
+    def _disable_memory(self, exc):
+        if not self._warned:
+            print(
+                f"WARNING: Disabling memory collection because embedding model "
+                f"'{self.embedding}' is unavailable: {exc}"
+            )
+            self._warned = True
+        self.enabled = False
 
     def get_embedding(self, text):
         """Get OpenAI embedding for a text"""
-        
-        response = self.client.embeddings.create(
-            model=self.embedding, input=text
-        )
+
+        if not self.enabled:
+            return None
+
+        try:
+            response = self.client.embeddings.create(model=self.embedding, input=text)
+        except Exception as exc:
+            self._disable_memory(exc)
+            return None
         return response.data[0].embedding
 
     def add_situations(self, situations_and_advice):
         """Add financial situations and their corresponding advice. Parameter is a list of tuples (situation, rec)"""
+
+        if not self.enabled:
+            return
 
         situations = []
         advice = []
@@ -32,10 +56,13 @@ class FinancialSituationMemory:
         offset = self.situation_collection.count()
 
         for i, (situation, recommendation) in enumerate(situations_and_advice):
+            embedding = self.get_embedding(situation)
+            if embedding is None:
+                return
             situations.append(situation)
             advice.append(recommendation)
             ids.append(str(offset + i))
-            embeddings.append(self.get_embedding(situation))
+            embeddings.append(embedding)
 
         self.situation_collection.add(
             documents=situations,
@@ -46,7 +73,12 @@ class FinancialSituationMemory:
 
     def get_memories(self, current_situation, n_matches=1):
         """Find matching recommendations using OpenAI embeddings"""
+        if not self.enabled or self.situation_collection.count() == 0:
+            return []
+
         query_embedding = self.get_embedding(current_situation)
+        if query_embedding is None:
+            return []
 
         results = self.situation_collection.query(
             query_embeddings=[query_embedding],

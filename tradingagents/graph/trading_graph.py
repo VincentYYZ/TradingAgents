@@ -14,6 +14,7 @@ from langgraph.prebuilt import ToolNode
 
 from tradingagents.agents import *
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.market_profiles import apply_market_profile, validate_selected_analysts
 from tradingagents.agents.utils.memory import FinancialSituationMemory
 from tradingagents.agents.utils.agent_states import (
     AgentState,
@@ -46,6 +47,37 @@ from .signal_processing import SignalProcessor
 class TradingAgentsGraph:
     """Main class that orchestrates the trading agents framework."""
 
+    @staticmethod
+    def _disable_local_proxies(backend_url: str) -> None:
+        if not backend_url:
+            return
+        if not (
+            backend_url.startswith("http://localhost")
+            or backend_url.startswith("http://127.0.0.1")
+        ):
+            return
+
+        for key in [
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ]:
+            os.environ.pop(key, None)
+
+        no_proxy_hosts = "localhost,127.0.0.1"
+        current_no_proxy = os.getenv("NO_PROXY") or os.getenv("no_proxy")
+        if current_no_proxy:
+            if "localhost" not in current_no_proxy or "127.0.0.1" not in current_no_proxy:
+                no_proxy_hosts = current_no_proxy + "," + no_proxy_hosts
+            else:
+                no_proxy_hosts = current_no_proxy
+
+        os.environ["NO_PROXY"] = no_proxy_hosts
+        os.environ["no_proxy"] = no_proxy_hosts
+
     def __init__(
         self,
         selected_analysts=["market", "social", "news", "fundamentals"],
@@ -60,7 +92,11 @@ class TradingAgentsGraph:
             config: Configuration dictionary. If None, uses default config
         """
         self.debug = debug
-        self.config = config or DEFAULT_CONFIG
+        base_config = config or DEFAULT_CONFIG
+        market_profile = base_config.get("market_profile", "us_equity")
+        self.config = apply_market_profile(base_config, market_profile)
+        normalized_selected_analysts = [getattr(analyst, "value", analyst) for analyst in selected_analysts]
+        validate_selected_analysts(self.config["market_profile"], normalized_selected_analysts)
 
         # Update the interface's config
         set_config(self.config)
@@ -72,9 +108,11 @@ class TradingAgentsGraph:
         )
 
         # Initialize LLMs
+        self._disable_local_proxies(self.config.get("backend_url", ""))
         if self.config["llm_provider"].lower() == "openai" or self.config["llm_provider"] == "ollama" or self.config["llm_provider"] == "openrouter":
-            self.deep_thinking_llm = ChatOpenAI(model=self.config["deep_think_llm"], base_url=self.config["backend_url"])
-            self.quick_thinking_llm = ChatOpenAI(model=self.config["quick_think_llm"], base_url=self.config["backend_url"])
+            api_key = os.getenv("OPENAI_API_KEY", "ollama")
+            self.deep_thinking_llm = ChatOpenAI(model=self.config["deep_think_llm"], base_url=self.config["backend_url"], api_key=api_key)
+            self.quick_thinking_llm = ChatOpenAI(model=self.config["quick_think_llm"], base_url=self.config["backend_url"], api_key=api_key)
         elif self.config["llm_provider"].lower() == "anthropic":
             self.deep_thinking_llm = ChatAnthropic(model=self.config["deep_think_llm"], base_url=self.config["backend_url"])
             self.quick_thinking_llm = ChatAnthropic(model=self.config["quick_think_llm"], base_url=self.config["backend_url"])
@@ -118,7 +156,7 @@ class TradingAgentsGraph:
         self.log_states_dict = {}  # date to full state dict
 
         # Set up the graph
-        self.graph = self.graph_setup.setup_graph(selected_analysts)
+        self.graph = self.graph_setup.setup_graph(normalized_selected_analysts)
 
     def _create_tool_nodes(self) -> Dict[str, ToolNode]:
         """Create tool nodes for different data sources using abstract methods."""

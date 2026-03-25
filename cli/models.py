@@ -1,6 +1,4 @@
 from enum import Enum
-from typing import List, Optional, Dict
-from pydantic import BaseModel
 
 
 class AnalystType(str, Enum):
@@ -8,3 +6,8 @@ class AnalystType(str, Enum):
     SOCIAL = "social"
     NEWS = "news"
     FUNDAMENTALS = "fundamentals"
+
+
+class MarketProfileType(str, Enum):
+    US_EQUITY = "us_equity"
+    CN_A_SHARE = "cn_a_share"

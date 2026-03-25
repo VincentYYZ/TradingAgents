@@ -1,0 +1,18 @@
+{
+  "ticker": "NVDA",
+  "trade_date": "2024-05-10",
+  "selected_analysts": ["market"],
+  "llm_provider": "ollama",
+  "backend_url": "http://localhost:11434/v1",
+  "deep_think_llm": "qwen3:14b",
+  "quick_think_llm": "qwen3:14b",
+  "embedding_model": "nomic-embed-text",
+  "max_debate_rounds": 1,
+  "max_risk_discuss_rounds": 1,
+  "data_vendors": {
+    "core_stock_apis": "yfinance",
+    "technical_indicators": "yfinance",
+    "fundamental_data": "alpha_vantage",
+    "news_data": "google"
+  }
+}
