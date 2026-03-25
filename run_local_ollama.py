@@ -1,5 +1,6 @@
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -30,10 +31,16 @@ def main():
 
     config_path = Path(args.config)
     runtime_config = json.loads(config_path.read_text())
+    today_str = datetime.now().strftime("%Y-%m-%d")
 
     selected_analysts = args.analysts or runtime_config.pop("selected_analysts", ["market"])
     ticker = args.ticker or runtime_config.pop("ticker", "NVDA")
-    trade_date = args.trade_date or runtime_config.pop("trade_date", "2024-05-10")
+    configured_trade_date = (runtime_config.pop("trade_date", "") or "").strip()
+    if configured_trade_date == "2024-05-10":
+        configured_trade_date = ""
+    trade_date = args.trade_date or configured_trade_date or today_str
+    runtime_config.setdefault("deep_think_llm", "qwen3.5:27b")
+    runtime_config.setdefault("quick_think_llm", "qwen3.5:27b")
 
     if args.model:
         runtime_config["deep_think_llm"] = args.model

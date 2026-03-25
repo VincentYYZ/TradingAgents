@@ -2,6 +2,7 @@ import io
 import json
 import os
 import socket
+import textwrap
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
@@ -42,8 +43,8 @@ PROVIDER_DEFAULTS = {
     },
     "ollama": {
         "backend_url": "http://localhost:11434/v1",
-        "quick_model": "qwen3:14b",
-        "deep_model": "qwen3:14b",
+        "quick_model": "qwen3.5:27b",
+        "deep_model": "qwen3.5:27b",
         "embedding_model": "nomic-embed-text",
     },
 }
@@ -111,6 +112,19 @@ STATUS_THEME = {
     "error": ("#b42318", "#fef3f2", "错误"),
 }
 
+REPORT_TEXT_REPLACEMENTS = {
+    "### Research Manager Decision": "### 研究经理决策",
+    "### Portfolio Manager Decision": "### 组合经理决策",
+    "## Error": "## 错误详情",
+    "Technical indicator": "技术指标",
+    "is temporarily unavailable for symbol": "暂时不可用，股票代码",
+    "Reason:": "原因：",
+    "No data found for symbol": "未找到对应股票数据，股票代码",
+    "No indicator data found for symbol": "未找到技术指标数据，股票代码",
+    "up to": "截至",
+    "between": "区间",
+}
+
 
 def extract_content_string(content):
     if isinstance(content, str):
@@ -127,6 +141,25 @@ def extract_content_string(content):
                 parts.append(str(item))
         return " ".join(parts)
     return str(content)
+
+
+def localize_report_text(content):
+    text = extract_content_string(content).strip()
+    if not text:
+        return ""
+    for source, target in REPORT_TEXT_REPLACEMENTS.items():
+        text = text.replace(source, target)
+    return text
+
+
+def format_report_content(section, content):
+    localized = localize_report_text(content)
+    if not localized:
+        return ""
+    title = REPORT_TITLES.get(section, "报告")
+    if localized.startswith("#"):
+        return localized
+    return f"# {title}\n\n{localized}"
 
 
 class StreamBuffer(io.TextIOBase):
@@ -165,8 +198,10 @@ class RunCollector:
         self.reports = {key: "" for key in REPORT_KEYS}
         self.final_state = None
         self.decision = ""
+        self.full_report = ""
         self.run_message = "未运行"
         self.output_dir = ""
+        self.pdf_path = None
 
     def set_status(self, agent, status):
         if agent in self.statuses:
@@ -174,7 +209,7 @@ class RunCollector:
 
     def set_report(self, section, content):
         if section in self.reports and content:
-            self.reports[section] = content
+            self.reports[section] = format_report_content(section, content)
 
     def set_research_team_status(self, status):
         for agent in ["Bull Researcher", "Bear Researcher", "Research Manager", "Trader"]:
@@ -249,7 +284,8 @@ class RunCollector:
             self.set_research_team_status("in_progress")
             if debate_state.get("judge_decision"):
                 current = self.reports.get("investment_plan", "")
-                self.set_report("investment_plan", f"{current}\n\n### Research Manager Decision\n{debate_state['judge_decision']}".strip())
+                appended = f"### 研究经理决策\n{debate_state['judge_decision']}"
+                self.set_report("investment_plan", f"{current}\n\n{appended}".strip())
                 self.set_research_team_status("completed")
                 self.set_status("Risky Analyst", "in_progress")
 
@@ -267,7 +303,7 @@ class RunCollector:
             if risk_state.get("current_neutral_response"):
                 self.set_status("Neutral Analyst", "in_progress")
             if risk_state.get("judge_decision"):
-                self.set_report("final_trade_decision", f"### Portfolio Manager Decision\n{risk_state['judge_decision']}")
+                self.set_report("final_trade_decision", f"### 组合经理决策\n{risk_state['judge_decision']}")
                 for agent in ["Risky Analyst", "Safe Analyst", "Neutral Analyst", "Portfolio Manager"]:
                     self.set_status(agent, "completed")
 
@@ -329,7 +365,9 @@ class RunCollector:
             self.reports["investment_plan"],
             self.reports["trader_investment_plan"],
             self.reports["final_trade_decision"],
+            self.full_report,
             self.output_dir,
+            self.pdf_path,
         )
 
 
@@ -424,6 +462,101 @@ def apply_cn_ollama_preset():
     )
 
 
+def _normalize_pdf_line(line):
+    normalized = line.replace("```text", "").replace("```", "")
+    normalized = normalized.replace("### ", "").replace("## ", "").replace("# ", "")
+    normalized = normalized.replace("|", "  ")
+    return normalized.rstrip()
+
+
+def _wrap_pdf_line(line, width=34):
+    if not line:
+        return [""]
+    if len(line) <= width:
+        return [line]
+    return textwrap.wrap(line, width=width, break_long_words=True, break_on_hyphens=False)
+
+
+def build_full_report_markdown(collector):
+    lines = [
+        f"# TradingAgents 完整分析报告（{collector.selections['ticker']}）",
+        "",
+        "## 任务信息",
+        f"- 市场：{collector.selections['market_profile']}",
+        f"- 股票代码：{collector.selections['ticker']}",
+        f"- 分析日期：{collector.selections['trade_date']}",
+        f"- LLM 提供商：{collector.selections['llm_provider']}",
+        "",
+    ]
+
+    for key in REPORT_KEYS:
+        content = (collector.reports.get(key) or "").strip()
+        if not content:
+            continue
+        lines.append(f"## {REPORT_TITLES[key]}")
+        lines.append("")
+        lines.append(content)
+        lines.append("")
+
+    if collector.decision:
+        lines.append("## 处理后的最终决策")
+        lines.append("")
+        lines.append(str(collector.decision))
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def generate_pdf_report(collector, output_dir, full_report_markdown):
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.pdfgen import canvas
+    except ImportError as exc:
+        raise RuntimeError("缺少 reportlab 依赖，请先安装最新项目依赖后再导出 PDF") from exc
+
+    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+
+    pdf_path = output_dir / "analysis_report.pdf"
+    pdf = canvas.Canvas(str(pdf_path), pagesize=A4)
+    page_width, page_height = A4
+    margin_x = 48
+    margin_top = 56
+    margin_bottom = 50
+    line_height = 16
+    content_width_chars = 34
+    y = page_height - margin_top
+
+    def ensure_space(required_lines=1):
+        nonlocal y
+        if y - (required_lines * line_height) < margin_bottom:
+            pdf.showPage()
+            pdf.setFont("STSong-Light", 11)
+            y = page_height - margin_top
+
+    def write_lines(lines, font_size=11):
+        nonlocal y
+        pdf.setFont("STSong-Light", font_size)
+        for raw_line in lines:
+            wrapped_lines = _wrap_pdf_line(_normalize_pdf_line(raw_line), content_width_chars)
+            ensure_space(len(wrapped_lines))
+            for wrapped in wrapped_lines:
+                pdf.drawString(margin_x, y, wrapped)
+                y -= line_height
+
+    title = f"TradingAgents 分析报告 - {collector.selections['ticker']}"
+    pdf.setTitle(title)
+    pdf.setAuthor("TradingAgents")
+    pdf.setFont("STSong-Light", 16)
+    pdf.drawString(margin_x, y, title)
+    y -= 28
+    write_lines(full_report_markdown.splitlines())
+
+    pdf.save()
+    return str(pdf_path)
+
+
 def persist_outputs(collector, logs, results_dir):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = Path(results_dir or DEFAULT_CONFIG["results_dir"]) / collector.selections["ticker"] / collector.selections["trade_date"] / f"gradio_app_{timestamp}"
@@ -433,6 +566,8 @@ def persist_outputs(collector, logs, results_dir):
     (output_dir / "logs.txt").write_text(logs)
     (output_dir / "messages.txt").write_text("\n".join(collector.messages))
     (output_dir / "tool_calls.txt").write_text("\n".join(collector.tools))
+    collector.full_report = build_full_report_markdown(collector)
+    (output_dir / "full_report.md").write_text(collector.full_report)
     for key, value in collector.reports.items():
         if value:
             (reports_dir / f"{key}.md").write_text(value)
@@ -440,6 +575,11 @@ def persist_outputs(collector, logs, results_dir):
         (output_dir / "final_state.json").write_text(json.dumps(collector.final_state, ensure_ascii=False, indent=2, default=str))
         (output_dir / "processed_decision.txt").write_text(str(collector.decision))
     collector.output_dir = str(output_dir)
+    try:
+        collector.pdf_path = generate_pdf_report(collector, output_dir, collector.full_report)
+    except Exception as exc:
+        collector.pdf_path = None
+        collector.add_message("系统", f"PDF 导出失败：{exc}")
 
 
 def run_analysis(market_profile, ticker, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts):
@@ -554,6 +694,7 @@ def build_app():
                 analysts = gr.CheckboxGroup(label="分析师团队", choices=analyst_choices_for_market(default_market), value=["market", "news", "fundamentals"])
                 run_btn = gr.Button("启动分析", variant="primary", size="lg")
                 output_dir = gr.Textbox(label="最近输出目录", interactive=False)
+                pdf_file = gr.File(label="报告 PDF", interactive=False)
 
             with gr.Column(scale=2):
                 run_state = gr.Markdown("未运行")
@@ -574,6 +715,7 @@ def build_app():
                         investment_plan = gr.Markdown(label="研究团队结论")
                         trader_plan = gr.Markdown(label="交易团队计划")
                         final_decision = gr.Markdown(label="组合管理决策")
+                        full_report = gr.Markdown(label="完整报告")
 
         config_inputs = [market_profile, ticker, trade_date, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, results_dir]
         config_outputs = config_json
@@ -593,7 +735,7 @@ def build_app():
         run_btn.click(
             fn=run_analysis,
             inputs=[market_profile, ticker, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts],
-            outputs=[run_state, progress_html, status_html, logs, messages, tools, market_report, sentiment_report, news_report, fundamentals_report, investment_plan, trader_plan, final_decision, output_dir],
+            outputs=[run_state, progress_html, status_html, logs, messages, tools, market_report, sentiment_report, news_report, fundamentals_report, investment_plan, trader_plan, final_decision, full_report, output_dir, pdf_file],
         )
 
     return demo

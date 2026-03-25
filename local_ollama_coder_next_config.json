@@ -1,7 +1,9 @@
 {
   "ticker": "NVDA",
   "trade_date": "2024-05-10",
-  "selected_analysts": ["market"],
+  "selected_analysts": [
+    "market"
+  ],
   "llm_provider": "ollama",
   "backend_url": "http://localhost:11434/v1",
   "deep_think_llm": "qwen3-coder-next:latest",

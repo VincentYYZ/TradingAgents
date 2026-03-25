@@ -35,7 +35,9 @@ Here are your past reflections on mistakes:
 
 Here is the debate:
 Debate History:
-{history}"""
+{history}
+
+Your final output must be written entirely in Simplified Chinese. Please use Chinese reasoning, Chinese section titles, and a Chinese actionable investment plan."""
         response = llm.invoke(prompt)
 
         new_investment_debate_state = {

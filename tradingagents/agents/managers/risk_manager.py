@@ -41,7 +41,7 @@ Deliverables:
 
 ---
 
-Focus on actionable insights and continuous improvement. Build on past lessons, critically evaluate all perspectives, and ensure each decision advances better outcomes."""
+Focus on actionable insights and continuous improvement. Build on past lessons, critically evaluate all perspectives, and ensure each decision advances better outcomes. Your final output must be written entirely in Simplified Chinese. Please use Chinese reasoning, Chinese section titles, and a Chinese final recommendation."""
 
         response = llm.invoke(prompt)
 
