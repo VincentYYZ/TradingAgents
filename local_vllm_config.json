@@ -1,0 +1,19 @@
+{
+  "ticker": "NVDA",
+  "trade_date": "",
+  "selected_analysts": ["market"],
+  "market_profile": "us_equity",
+  "llm_provider": "vllm",
+  "backend_url": "http://127.0.0.1:8000/v1",
+  "deep_think_llm": "Qwen3.6-27B",
+  "quick_think_llm": "Qwen3.6-27B",
+  "embedding_model": "",
+  "max_debate_rounds": 1,
+  "max_risk_discuss_rounds": 1,
+  "data_vendors": {
+    "core_stock_apis": "yfinance",
+    "technical_indicators": "yfinance",
+    "fundamental_data": "alpha_vantage",
+    "news_data": "google"
+  }
+}

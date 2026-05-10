@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import socket
 import textwrap
 import traceback
@@ -41,10 +42,22 @@ PROVIDER_DEFAULTS = {
         "deep_model": "deepseek/deepseek-chat-v3-0324:free",
         "embedding_model": "text-embedding-3-small",
     },
+    "lucen_openai": {
+        "backend_url": "https://lucen.cc",
+        "quick_model": "gpt-5.5",
+        "deep_model": "gpt-5.5",
+        "embedding_model": "text-embedding-3-small",
+    },
+    "vllm": {
+        "backend_url": "http://127.0.0.1:8000/v1",
+        "quick_model": "Qwen3.6-27B",
+        "deep_model": "Qwen3.6-27B",
+        "embedding_model": "",
+    },
     "ollama": {
         "backend_url": "http://localhost:11434/v1",
-        "quick_model": "qwen3.5:27b",
-        "deep_model": "qwen3.5:27b",
+        "quick_model": "qwen3.6:35b",
+        "deep_model": "qwen3.6:35b",
         "embedding_model": "nomic-embed-text",
     },
 }
@@ -371,7 +384,7 @@ class RunCollector:
         )
 
 
-def build_run_config(market_profile, ticker, trade_date, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, results_dir):
+def build_run_config(market_profile, ticker, trade_date, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, results_dir, api_key=None):
     config = apply_market_profile(DEFAULT_CONFIG.copy(), market_profile)
     config["llm_provider"] = llm_provider
     config["backend_url"] = backend_url
@@ -383,6 +396,8 @@ def build_run_config(market_profile, ticker, trade_date, llm_provider, backend_u
     config["tool_vendors"] = {}
     if embedding_model:
         config["embedding_model"] = embedding_model
+    if api_key:
+        config["api_key"] = api_key
     return config
 
 
@@ -445,6 +460,75 @@ def apply_market_defaults(market_profile, selected_analysts):
 def apply_provider_defaults(provider):
     defaults = PROVIDER_DEFAULTS[provider]
     return defaults["backend_url"], defaults["quick_model"], defaults["deep_model"], defaults["embedding_model"]
+
+
+def capture_qa_context(full_report_md, llm_provider, backend_url, quick_model, deep_model, api_key):
+    """在分析完成后捕获 Q&A 需要的上下文（报告 + LLM 配置）。"""
+    return {
+        "report": full_report_md or "",
+        "llm_provider": llm_provider,
+        "backend_url": backend_url,
+        "model": deep_model or quick_model,
+        "api_key": (api_key or "").strip() or os.getenv("OPENAI_API_KEY", ""),
+    }
+
+
+def answer_report_question(user_message, history, qa_context):
+    """基于已生成的报告内容，使用当前选择的模型回答用户提问。"""
+    history = list(history or [])
+    if not user_message or not user_message.strip():
+        return history, ""
+
+    if not qa_context or not qa_context.get("report"):
+        history.append((user_message, "⚠️ 请先完成一次分析，生成报告后再提问。"))
+        return history, ""
+
+    provider = (qa_context.get("llm_provider") or "").lower()
+    api_key = qa_context.get("api_key") or os.getenv("OPENAI_API_KEY", "ollama")
+
+    try:
+        if provider in {"openai", "ollama", "openrouter", "vllm", "lucen_openai"}:
+            from openai import OpenAI
+
+            client = OpenAI(
+                base_url=qa_context["backend_url"],
+                api_key=api_key,
+            )
+
+            system_prompt = (
+                "你是一位资深的金融分析助手。以下是针对某只股票的完整分析报告，"
+                "请严格根据报告内容回答用户的问题。若报告中没有相关信息，请明确说明。"
+                "回答请使用中文，条理清晰、引用报告中的具体数据或观点。\n\n"
+                f"===== 分析报告开始 =====\n{qa_context['report']}\n===== 分析报告结束 ====="
+            )
+
+            messages = [{"role": "system", "content": system_prompt}]
+            # 保留最近 10 轮对话上下文
+            for user_msg, bot_msg in history[-10:]:
+                if user_msg:
+                    messages.append({"role": "user", "content": user_msg})
+                if bot_msg:
+                    messages.append({"role": "assistant", "content": bot_msg})
+            messages.append({"role": "user", "content": user_message})
+
+            resp = client.chat.completions.create(
+                model=qa_context["model"],
+                messages=messages,
+                temperature=0.3,
+                max_tokens=2048,
+            )
+            answer = resp.choices[0].message.content or "（模型未返回内容）"
+        else:
+            answer = f"⚠️ 暂不支持 provider: {provider}。请使用 OpenAI-compatible 提供商。"
+    except Exception as exc:
+        answer = f"❌ 调用模型失败: {type(exc).__name__}: {exc}"
+
+    history.append((user_message, answer))
+    return history, ""
+
+
+def clear_qa_history():
+    return [], ""
 
 
 def apply_cn_ollama_preset():
@@ -582,10 +666,94 @@ def persist_outputs(collector, logs, results_dir):
         collector.add_message("系统", f"PDF 导出失败：{exc}")
 
 
-def run_analysis(market_profile, ticker, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts):
-    load_dotenv()
+def parse_ticker_list(tickers_text):
+    """从文本中解析多个 ticker，支持逗号/换行/空格/中文分隔符。"""
+    if not tickers_text:
+        return []
+    raw = re.split(r"[\s,，;；、|]+", tickers_text.strip())
+    seen = set()
+    result = []
+    for item in raw:
+        item = item.strip().upper()
+        if item and item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def _build_batch_summary_md(batch_rows, current_idx, total):
+    if not batch_rows and current_idx == 0:
+        return ""
+    lines = [f"## 批量分析进度：{current_idx} / {total}", "", "| # | 股票代码 | 状态 | 输出目录 |", "|---|---|---|---|"]
+    for idx, row in enumerate(batch_rows, 1):
+        status_icon = {"success": "✅ 成功", "failed": "❌ 失败", "running": "⏳ 进行中"}.get(row["status"], row["status"])
+        out = row.get("output_dir") or ""
+        lines.append(f"| {idx} | {row['ticker']} | {status_icon} | `{out}` |")
+    return "\n".join(lines)
+
+
+def run_batch_analysis(market_profile, tickers_text, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key):
+    """批量分析入口：遍历多个 ticker，逐个调用单股分析逻辑，累计可下载文件。"""
+    tickers = parse_ticker_list(tickers_text)
+    if not tickers:
+        raise gr.Error("Ticker 不能为空（可输入多个，使用逗号或换行分隔）")
+
+    batch_rows = []
+    batch_files = []
+    last_output = None
+
+    for idx, ticker in enumerate(tickers, 1):
+        batch_rows.append({"ticker": ticker, "status": "running", "output_dir": ""})
+        summary_md = _build_batch_summary_md(batch_rows, idx, len(tickers))
+
+        try:
+            for output_tuple in _run_single_analysis(
+                market_profile, ticker, trade_date, results_dir, llm_provider, backend_url,
+                quick_model, deep_model, embedding_model, research_depth, analysts, api_key,
+            ):
+                last_output = output_tuple
+                # 实时把当前进度+已完成文件加到输出末尾
+                yield output_tuple + (summary_md, batch_files)
+        except gr.Error:
+            raise
+        except Exception as exc:
+            batch_rows[-1]["status"] = "failed"
+            summary_md = _build_batch_summary_md(batch_rows, idx, len(tickers))
+            if last_output is not None:
+                yield last_output + (summary_md, batch_files)
+            continue
+
+        # 单股完成后，提取产出文件
+        if last_output is not None:
+            out_dir = last_output[-2]
+            pdf_path = last_output[-1]
+            batch_rows[-1]["output_dir"] = out_dir or ""
+            ticker_files = []
+            if pdf_path and Path(pdf_path).exists():
+                ticker_files.append(pdf_path)
+            if out_dir:
+                md_path = Path(out_dir) / "full_report.md"
+                if md_path.exists():
+                    ticker_files.append(str(md_path))
+            batch_files.extend(ticker_files)
+            batch_rows[-1]["status"] = "success" if ticker_files else "failed"
+            summary_md = _build_batch_summary_md(batch_rows, idx, len(tickers))
+            yield last_output + (summary_md, batch_files)
+
+    # 最终：把 run_state 改成完成提示
+    if last_output is not None:
+        final_tuple = list(last_output)
+        success_count = sum(1 for r in batch_rows if r["status"] == "success")
+        final_tuple[0] = f"批量分析完成：{success_count}/{len(tickers)} 成功"
+        summary_md = _build_batch_summary_md(batch_rows, len(tickers), len(tickers))
+        yield tuple(final_tuple) + (summary_md, batch_files)
+
+
+def _run_single_analysis(market_profile, ticker, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key):
+    load_dotenv(override=True)
     ticker = (ticker or "").strip().upper()
     trade_date = (trade_date or "").strip()
+    api_key = (api_key or "").strip()
     try:
         datetime.strptime(trade_date, "%Y-%m-%d")
     except ValueError:
@@ -622,7 +790,7 @@ def run_analysis(market_profile, ticker, trade_date, results_dir, llm_provider, 
     yield collector.output_tuple(log_buffer.content())
 
     try:
-        config = build_run_config(**selections)
+        config = build_run_config(**selections, api_key=api_key)
         with redirect_stdout(log_buffer), redirect_stderr(log_buffer):
             graph = TradingAgentsGraph(selected_analysts=selections["analysts"], debug=False, config=config)
             init_state = graph.propagator.create_initial_state(selections["ticker"], selections["trade_date"])
@@ -664,7 +832,7 @@ def build_app():
     market_choices = list(MARKET_PROFILES.keys())
     provider_choices = list(PROVIDER_DEFAULTS.keys())
     default_market = "cn_a_share"
-    default_provider = "ollama"
+    default_provider = "lucen_openai"
     default_supported = MARKET_PROFILES[default_market]["supported_analysts"]
 
     with gr.Blocks(title="TradingAgents 可视化运行器") as demo:
@@ -682,11 +850,17 @@ def build_app():
         with gr.Row():
             with gr.Column(scale=1):
                 market_profile = gr.Dropdown(label="市场", choices=market_choices, value=default_market)
-                ticker = gr.Textbox(label="股票代码", value=MARKET_PROFILES[default_market]["default_ticker"])
+                ticker = gr.Textbox(
+                    label="股票代码（支持批量，多个用逗号或换行分隔）",
+                    value=MARKET_PROFILES[default_market]["default_ticker"],
+                    lines=3,
+                    placeholder="例如：600519, 000001\n或一行一个：\n600519\n000001",
+                )
                 trade_date = gr.Textbox(label="日期", value=datetime.now().strftime("%Y-%m-%d"))
                 results_dir = gr.Textbox(label="结果目录", value=DEFAULT_CONFIG["results_dir"])
                 llm_provider = gr.Dropdown(label="LLM 提供商", choices=provider_choices, value=default_provider)
                 backend_url = gr.Textbox(label="后端地址", value=PROVIDER_DEFAULTS[default_provider]["backend_url"])
+                api_key = gr.Textbox(label="API Key", type="password", value=os.getenv("OPENAI_API_KEY", ""))
                 quick_model = gr.Textbox(label="快速模型", value=PROVIDER_DEFAULTS[default_provider]["quick_model"])
                 deep_model = gr.Textbox(label="深度模型", value=PROVIDER_DEFAULTS[default_provider]["deep_model"])
                 embedding_model = gr.Textbox(label="Embedding 模型", value=PROVIDER_DEFAULTS[default_provider]["embedding_model"])
@@ -716,6 +890,25 @@ def build_app():
                         trader_plan = gr.Markdown(label="交易团队计划")
                         final_decision = gr.Markdown(label="组合管理决策")
                         full_report = gr.Markdown(label="完整报告")
+                    with gr.Tab("批量结果"):
+                        gr.Markdown("批量分析完成的股票列表与可下载报告。每个股票会生成 PDF 与 Markdown 报告。")
+                        batch_summary_md = gr.Markdown(value="（尚未运行）")
+                        batch_files_dl = gr.Files(label="下载已完成的报告文件", interactive=False)
+                    with gr.Tab("报告问答"):
+                        gr.Markdown(
+                            "分析完成后，可在此针对报告内容向当前选择的模型继续追问。"
+                            "模型会基于已生成的完整报告回答你的问题。"
+                        )
+                        qa_context_state = gr.State(value={})
+                        qa_chatbot = gr.Chatbot(label="报告问答", height=420)
+                        qa_input = gr.Textbox(
+                            label="你的问题",
+                            placeholder="例如：这份报告对基本面的评估有哪些关键结论？",
+                            lines=2,
+                        )
+                        with gr.Row():
+                            qa_send_btn = gr.Button("发送", variant="primary")
+                            qa_clear_btn = gr.Button("清空对话")
 
         config_inputs = [market_profile, ticker, trade_date, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, results_dir]
         config_outputs = config_json
@@ -733,10 +926,26 @@ def build_app():
         preset_btn.click(fn=apply_cn_ollama_preset, outputs=[market_profile, ticker, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts])
 
         run_btn.click(
-            fn=run_analysis,
-            inputs=[market_profile, ticker, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts],
-            outputs=[run_state, progress_html, status_html, logs, messages, tools, market_report, sentiment_report, news_report, fundamentals_report, investment_plan, trader_plan, final_decision, full_report, output_dir, pdf_file],
+            fn=run_batch_analysis,
+            inputs=[market_profile, ticker, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key],
+            outputs=[run_state, progress_html, status_html, logs, messages, tools, market_report, sentiment_report, news_report, fundamentals_report, investment_plan, trader_plan, final_decision, full_report, output_dir, pdf_file, batch_summary_md, batch_files_dl],
+        ).then(
+            fn=capture_qa_context,
+            inputs=[full_report, llm_provider, backend_url, quick_model, deep_model, api_key],
+            outputs=qa_context_state,
         )
+
+        qa_send_btn.click(
+            fn=answer_report_question,
+            inputs=[qa_input, qa_chatbot, qa_context_state],
+            outputs=[qa_chatbot, qa_input],
+        )
+        qa_input.submit(
+            fn=answer_report_question,
+            inputs=[qa_input, qa_chatbot, qa_context_state],
+            outputs=[qa_chatbot, qa_input],
+        )
+        qa_clear_btn.click(fn=clear_qa_history, outputs=[qa_chatbot, qa_input])
 
     return demo
 
@@ -754,7 +963,7 @@ def find_available_port(start_port: int, max_attempts: int = 20) -> int:
 
 
 def main():
-    load_dotenv()
+    load_dotenv(override=True)
     app = build_app()
     preferred_port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
     server_port = find_available_port(preferred_port)

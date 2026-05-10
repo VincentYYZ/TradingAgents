@@ -7,17 +7,20 @@ from openai import OpenAI
 
 class FinancialSituationMemory:
     def __init__(self, name, config):
-        if config["backend_url"] == "http://localhost:11434/v1":
+        provider = config.get("llm_provider", "").lower()
+        if provider == "vllm" and not config.get("embedding_model"):
+            self.embedding = None
+        elif config["backend_url"] == "http://localhost:11434/v1":
             self.embedding = config.get("embedding_model", "nomic-embed-text")
         else:
             self.embedding = config.get("embedding_model", "text-embedding-3-small")
         self.client = OpenAI(
             base_url=config["backend_url"],
-            api_key=os.getenv("OPENAI_API_KEY", "ollama"),
+            api_key=config.get("api_key") or os.getenv("OPENAI_API_KEY", "ollama"),
         )
         self.chroma_client = chromadb.Client(Settings(allow_reset=True))
         self.situation_collection = self.chroma_client.get_or_create_collection(name=name)
-        self.enabled = True
+        self.enabled = bool(self.embedding)
         self._warned = False
 
     def _disable_memory(self, exc):

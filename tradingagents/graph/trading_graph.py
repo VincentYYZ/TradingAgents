@@ -57,26 +57,19 @@ class TradingAgentsGraph:
         ):
             return
 
-        for key in [
-            "HTTP_PROXY",
-            "http_proxy",
-            "HTTPS_PROXY",
-            "https_proxy",
-            "ALL_PROXY",
-            "all_proxy",
-        ]:
-            os.environ.pop(key, None)
-
-        no_proxy_hosts = "localhost,127.0.0.1"
-        current_no_proxy = os.getenv("NO_PROXY") or os.getenv("no_proxy")
-        if current_no_proxy:
-            if "localhost" not in current_no_proxy or "127.0.0.1" not in current_no_proxy:
-                no_proxy_hosts = current_no_proxy + "," + no_proxy_hosts
-            else:
-                no_proxy_hosts = current_no_proxy
-
-        os.environ["NO_PROXY"] = no_proxy_hosts
-        os.environ["no_proxy"] = no_proxy_hosts
+        # Only add localhost/127.0.0.1 to NO_PROXY so the local LLM call bypasses
+        # the HTTP proxy. Do NOT clear HTTP_PROXY/HTTPS_PROXY here, because other
+        # components in the same process (e.g. akshare for A-share data) may
+        # legitimately rely on the proxy to reach public endpoints.
+        required_hosts = ["localhost", "127.0.0.1"]
+        current_no_proxy = os.getenv("NO_PROXY") or os.getenv("no_proxy") or ""
+        existing = [item.strip() for item in current_no_proxy.split(",") if item.strip()]
+        for host in required_hosts:
+            if host not in existing:
+                existing.append(host)
+        merged = ",".join(existing)
+        os.environ["NO_PROXY"] = merged
+        os.environ["no_proxy"] = merged
 
     def __init__(
         self,
@@ -109,14 +102,23 @@ class TradingAgentsGraph:
 
         # Initialize LLMs
         self._disable_local_proxies(self.config.get("backend_url", ""))
-        if self.config["llm_provider"].lower() == "openai" or self.config["llm_provider"] == "ollama" or self.config["llm_provider"] == "openrouter":
-            api_key = os.getenv("OPENAI_API_KEY", "ollama")
-            self.deep_thinking_llm = ChatOpenAI(model=self.config["deep_think_llm"], base_url=self.config["backend_url"], api_key=api_key)
-            self.quick_thinking_llm = ChatOpenAI(model=self.config["quick_think_llm"], base_url=self.config["backend_url"], api_key=api_key)
-        elif self.config["llm_provider"].lower() == "anthropic":
+        provider = self.config["llm_provider"].lower()
+        if provider in {"openai", "ollama", "openrouter", "vllm", "lucen_openai"}:
+            api_key = self.config.get("api_key") or os.getenv("OPENAI_API_KEY", "ollama")
+            self.deep_thinking_llm = ChatOpenAI(
+                model=self.config["deep_think_llm"],
+                openai_api_base=self.config["backend_url"],
+                openai_api_key=api_key,
+            )
+            self.quick_thinking_llm = ChatOpenAI(
+                model=self.config["quick_think_llm"],
+                openai_api_base=self.config["backend_url"],
+                openai_api_key=api_key,
+            )
+        elif provider == "anthropic":
             self.deep_thinking_llm = ChatAnthropic(model=self.config["deep_think_llm"], base_url=self.config["backend_url"])
             self.quick_thinking_llm = ChatAnthropic(model=self.config["quick_think_llm"], base_url=self.config["backend_url"])
-        elif self.config["llm_provider"].lower() == "google":
+        elif provider == "google":
             self.deep_thinking_llm = ChatGoogleGenerativeAI(model=self.config["deep_think_llm"])
             self.quick_thinking_llm = ChatGoogleGenerativeAI(model=self.config["quick_think_llm"])
         else:

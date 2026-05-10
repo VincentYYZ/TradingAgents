@@ -22,7 +22,7 @@ def get_YFin_data_online(
 
     # Check if data is empty
     if data.empty:
-        return (
+        raise ValueError(
             f"No data found for symbol '{symbol}' between {start_date} and {end_date}"
         )
 

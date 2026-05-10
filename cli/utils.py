@@ -168,6 +168,9 @@ def select_shallow_thinking_agent(provider) -> str:
             ("Meta: Llama 3.3 8B Instruct - A lightweight and ultra-fast variant of Llama 3.3 70B", "meta-llama/llama-3.3-8b-instruct:free"),
             ("google/gemini-2.0-flash-exp:free - Gemini Flash 2.0 offers a significantly faster time to first token", "google/gemini-2.0-flash-exp:free"),
         ],
+        "vllm": [
+            ("Qwen3.6-27B via local vLLM", "Qwen3.6-27B"),
+        ],
         "ollama": [
             ("qwen3:14b local", "qwen3:14b"),
             ("qwen3-coder-next:latest local", "qwen3-coder-next:latest"),
@@ -224,6 +227,9 @@ def select_deep_thinking_agent(provider) -> str:
             ("DeepSeek V3 - a 685B-parameter, mixture-of-experts model", "deepseek/deepseek-chat-v3-0324:free"),
             ("Deepseek - latest iteration of the flagship chat model family from the DeepSeek team.", "deepseek/deepseek-chat-v3-0324:free"),
         ],
+        "vllm": [
+            ("Qwen3.6-27B via local vLLM", "Qwen3.6-27B"),
+        ],
         "ollama": [
             ("qwen3:14b local", "qwen3:14b"),
             ("qwen3-coder-next:latest local", "qwen3-coder-next:latest"),
@@ -258,6 +264,7 @@ def select_llm_provider() -> tuple[str, str]:
         ("Anthropic", "https://api.anthropic.com/"),
         ("Google", "https://generativelanguage.googleapis.com/v1"),
         ("Openrouter", "https://openrouter.ai/api/v1"),
+        ("VLLM", "http://127.0.0.1:8000/v1"),
         ("Ollama", "http://localhost:11434/v1"),
     ]
 

@@ -29,6 +29,105 @@ _CACHE_LOCKS_GUARD = threading.Lock()
 _AKSHARE_REQUEST_GATE = threading.Lock()
 
 
+def _prefixed_a_share_symbol(symbol: str) -> str:
+    if symbol.startswith(("6", "9")):
+        return f"sh{symbol}"
+    return f"sz{symbol}"
+
+
+def _normalize_akshare_dataframe(data: pd.DataFrame, source: str) -> pd.DataFrame:
+    if data is None or data.empty:
+        return pd.DataFrame()
+
+    if source == "eastmoney":
+        normalized = data.rename(columns=COLUMN_MAP)
+    elif source == "tencent":
+        normalized = data.rename(
+            columns={
+                "date": "Date",
+                "open": "Open",
+                "close": "Close",
+                "high": "High",
+                "low": "Low",
+                "amount": "Volume",
+            }
+        )
+    elif source == "sina":
+        normalized = data.rename(
+            columns={
+                "date": "Date",
+                "open": "Open",
+                "close": "Close",
+                "high": "High",
+                "low": "Low",
+                "volume": "Volume",
+                "amount": "Amount",
+                "turnover": "TurnoverRate",
+            }
+        )
+        if "TurnoverRate" in normalized.columns:
+            normalized["TurnoverRate"] = pd.to_numeric(normalized["TurnoverRate"], errors="coerce") * 100
+    else:
+        raise ValueError(f"Unsupported akshare data source: {source}")
+
+    if "Date" not in normalized.columns:
+        raise ValueError(f"Unexpected Akshare response columns: {list(normalized.columns)}")
+
+    normalized["Date"] = pd.to_datetime(normalized["Date"])
+    normalized = normalized.sort_values("Date").reset_index(drop=True)
+
+    numeric_columns = [
+        "Open",
+        "Close",
+        "High",
+        "Low",
+        "Volume",
+        "Amount",
+        "Amplitude",
+        "ChangePercent",
+        "ChangeAmount",
+        "TurnoverRate",
+    ]
+    for column in numeric_columns:
+        if column in normalized.columns:
+            normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
+
+    return normalized
+
+
+def _fetch_from_eastmoney(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+    data = ak.stock_zh_a_hist(
+        symbol=symbol,
+        period="daily",
+        start_date=start_date.replace("-", ""),
+        end_date=end_date.replace("-", ""),
+        adjust="qfq",
+        timeout=15,
+    )
+    return _normalize_akshare_dataframe(data, "eastmoney")
+
+
+def _fetch_from_tencent(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+    data = ak.stock_zh_a_hist_tx(
+        symbol=_prefixed_a_share_symbol(symbol),
+        start_date=start_date,
+        end_date=end_date,
+        adjust="qfq",
+        timeout=15,
+    )
+    return _normalize_akshare_dataframe(data, "tencent")
+
+
+def _fetch_from_sina(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+    data = ak.stock_zh_a_daily(
+        symbol=_prefixed_a_share_symbol(symbol),
+        start_date=start_date.replace("-", ""),
+        end_date=end_date.replace("-", ""),
+        adjust="qfq",
+    )
+    return _normalize_akshare_dataframe(data, "sina")
+
+
 def _cache_path(symbol: str, start_date: str, end_date: str) -> str:
     config = get_config()
     os.makedirs(config["data_cache_dir"], exist_ok=True)
@@ -74,51 +173,33 @@ def _fetch_akshare_dataframe(symbol: str, start_date: str, end_date: str) -> pd.
 
         last_error = None
         data = None
-        for attempt in range(3):
+        fetchers = [
+            _fetch_from_tencent,
+            _fetch_from_sina,
+            _fetch_from_eastmoney,
+        ]
+        for fetcher in fetchers:
             try:
+                print(f"DEBUG: Akshare internal source '{fetcher.__name__}' for symbol '{normalized_symbol}'")
                 with _AKSHARE_REQUEST_GATE:
-                    data = ak.stock_zh_a_hist(
-                        symbol=normalized_symbol,
-                        period="daily",
-                        start_date=start_date.replace("-", ""),
-                        end_date=end_date.replace("-", ""),
-                        adjust="qfq",
+                    data = fetcher(normalized_symbol, start_date, end_date)
+                if data is not None and not data.empty:
+                    print(
+                        f"DEBUG: Akshare internal source '{fetcher.__name__}' succeeded with {len(data)} rows"
                     )
-                last_error = None
-                break
+                    last_error = None
+                    break
+                print(f"DEBUG: Akshare internal source '{fetcher.__name__}' returned no rows")
             except Exception as exc:
                 last_error = exc
-                if attempt < 2:
-                    time.sleep(1.0 + attempt)
+                print(f"DEBUG: Akshare internal source '{fetcher.__name__}' failed: {exc}")
+                time.sleep(1.0)
 
-        if last_error is not None:
+        if last_error is not None and (data is None or data.empty):
             raise last_error
 
         if data is None or data.empty:
             return pd.DataFrame()
-
-        data = data.rename(columns=COLUMN_MAP)
-        if "Date" not in data.columns:
-            raise ValueError(f"Unexpected Akshare response columns: {list(data.columns)}")
-
-        data["Date"] = pd.to_datetime(data["Date"])
-        data = data.sort_values("Date").reset_index(drop=True)
-
-        numeric_columns = [
-            "Open",
-            "Close",
-            "High",
-            "Low",
-            "Volume",
-            "Amount",
-            "Amplitude",
-            "ChangePercent",
-            "ChangeAmount",
-            "TurnoverRate",
-        ]
-        for column in numeric_columns:
-            if column in data.columns:
-                data[column] = pd.to_numeric(data[column], errors="coerce")
 
         data.to_csv(cache_file, index=False)
         return data
@@ -130,11 +211,11 @@ def get_stock(symbol: str, start_date: str, end_date: str):
 
     data = _fetch_akshare_dataframe(symbol, start_date, end_date)
     if data.empty:
-        return f"No data found for symbol '{symbol}' between {start_date} and {end_date}"
+        raise ValueError(f"No data found for symbol '{symbol}' between {start_date} and {end_date}")
 
     filtered = data[(data["Date"] >= start_date) & (data["Date"] <= end_date)].copy()
     if filtered.empty:
-        return f"No data found for symbol '{symbol}' between {start_date} and {end_date}"
+        raise ValueError(f"No data found for symbol '{symbol}' between {start_date} and {end_date}")
 
     filtered["Date"] = filtered["Date"].dt.strftime("%Y-%m-%d")
     csv_string = filtered.to_csv(index=False)

@@ -5,10 +5,14 @@ A_SHARE_BASE_PATTERN = re.compile(r"^\d{6}$")
 A_SHARE_SUFFIX_PATTERN = re.compile(r"^(\d{6})\.(SH|SZ|SS)$")
 
 
+def _sanitize_symbol(symbol: str) -> str:
+    return symbol.strip().upper().lstrip("$")
+
+
 def is_a_share_symbol(symbol: str) -> bool:
     if not symbol:
         return False
-    normalized = symbol.strip().upper()
+    normalized = _sanitize_symbol(symbol)
     return bool(A_SHARE_BASE_PATTERN.fullmatch(normalized) or A_SHARE_SUFFIX_PATTERN.fullmatch(normalized))
 
 
@@ -21,7 +25,7 @@ def detect_market_profile(symbol: str, configured_market_profile: str | None = N
 
 
 def _normalize_a_share_base(symbol: str) -> str:
-    normalized = symbol.strip().upper()
+    normalized = _sanitize_symbol(symbol)
     suffix_match = A_SHARE_SUFFIX_PATTERN.fullmatch(normalized)
     if suffix_match:
         return suffix_match.group(1)
@@ -33,7 +37,7 @@ def _normalize_a_share_base(symbol: str) -> str:
 
 
 def _normalize_a_share_exchange(symbol: str) -> str:
-    normalized = symbol.strip().upper()
+    normalized = _sanitize_symbol(symbol)
     suffix_match = A_SHARE_SUFFIX_PATTERN.fullmatch(normalized)
     if suffix_match:
         exchange = suffix_match.group(2)
@@ -49,7 +53,7 @@ def _normalize_a_share_exchange(symbol: str) -> str:
 
 def normalize_symbol_for_vendor(symbol: str, vendor: str, market_profile: str | None = None) -> str:
     resolved_market = detect_market_profile(symbol, market_profile)
-    normalized = symbol.strip().upper()
+    normalized = _sanitize_symbol(symbol)
 
     if resolved_market != "cn_a_share":
         return normalized

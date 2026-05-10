@@ -36,11 +36,19 @@ PROVIDER_DEFAULTS = {
         "backend_url": "https://openrouter.ai/api/v1",
         "quick_model": "meta-llama/llama-3.3-8b-instruct:free",
         "deep_model": "deepseek/deepseek-chat-v3-0324:free",
+        "embedding_model": "text-embedding-3-small",
+    },
+    "vllm": {
+        "backend_url": "http://127.0.0.1:8000/v1",
+        "quick_model": "Qwen3.6-27B",
+        "deep_model": "Qwen3.6-27B",
+        "embedding_model": "",
     },
     "ollama": {
         "backend_url": "http://localhost:11434/v1",
         "quick_model": "qwen3:14b",
         "deep_model": "qwen3:14b",
+        "embedding_model": "nomic-embed-text",
     },
 }
 
@@ -325,7 +333,7 @@ class TradingAgentsVisualApp:
         self.backend_url_var = tk.StringVar(value=PROVIDER_DEFAULTS["ollama"]["backend_url"])
         self.quick_model_var = tk.StringVar(value=PROVIDER_DEFAULTS["ollama"]["quick_model"])
         self.deep_model_var = tk.StringVar(value=PROVIDER_DEFAULTS["ollama"]["deep_model"])
-        self.embedding_model_var = tk.StringVar(value="nomic-embed-text")
+        self.embedding_model_var = tk.StringVar(value=PROVIDER_DEFAULTS["ollama"]["embedding_model"])
         self.research_depth_var = tk.IntVar(value=1)
         self.run_state_var = tk.StringVar(value="未运行")
         self.progress_var = tk.DoubleVar(value=0.0)
@@ -512,16 +520,13 @@ class TradingAgentsVisualApp:
         self.backend_url_var.set(defaults["backend_url"])
         self.quick_model_var.set(defaults["quick_model"])
         self.deep_model_var.set(defaults["deep_model"])
-        if provider == "ollama" and not self.embedding_model_var.get().strip():
-            self.embedding_model_var.set("nomic-embed-text")
+        self.embedding_model_var.set(defaults.get("embedding_model", ""))
         self.save_app_state()
 
     def on_market_changed(self, _event=None):
         market = self.market_profile_var.get()
         self.ticker_var.set(MARKET_PROFILES[market]["default_ticker"])
         self.refresh_analyst_controls()
-        if market == "cn_a_share" and self.llm_provider_var.get() == "ollama" and not self.embedding_model_var.get().strip():
-            self.embedding_model_var.set("nomic-embed-text")
         self.save_app_state()
 
     def apply_cn_ollama_preset(self):
@@ -531,7 +536,7 @@ class TradingAgentsVisualApp:
         self.backend_url_var.set(PROVIDER_DEFAULTS["ollama"]["backend_url"])
         self.quick_model_var.set(PROVIDER_DEFAULTS["ollama"]["quick_model"])
         self.deep_model_var.set(PROVIDER_DEFAULTS["ollama"]["deep_model"])
-        self.embedding_model_var.set("nomic-embed-text")
+        self.embedding_model_var.set(PROVIDER_DEFAULTS["ollama"]["embedding_model"])
         self.research_depth_var.set(1)
         self.analyst_vars["market"].set(True)
         self.analyst_vars["social"].set(False)
