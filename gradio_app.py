@@ -215,7 +215,9 @@ class RunCollector:
         self.full_report = ""
         self.run_message = "未运行"
         self.output_dir = ""
-        self.pdf_path = None
+        self.exported_md_path = ""
+        self.token_usage = {"input": 0, "output": 0, "total": 0}
+        self._counted_usage_keys = set()
 
     def set_status(self, agent, status):
         if agent in self.statuses:
@@ -243,10 +245,50 @@ class RunCollector:
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.tools.append(f"[{timestamp}] {name}({args})")
 
+    def merge_usage(self, message):
+        usage = getattr(message, "usage_metadata", None)
+        response_metadata = getattr(message, "response_metadata", None) or {}
+        if not usage:
+            usage = response_metadata.get("token_usage") or response_metadata.get("usage") or {}
+        if not usage:
+            return
+
+        if not isinstance(usage, dict):
+            usage = dict(usage)
+
+        input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+        output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+        total_tokens = int(usage.get("total_tokens") or 0) or (input_tokens + output_tokens)
+
+        if input_tokens <= 0 and output_tokens <= 0 and total_tokens <= 0:
+            return
+
+        message_key = getattr(message, "id", None) or response_metadata.get("id") or (
+            f"{type(message).__name__}|{extract_content_string(getattr(message, 'content', ''))[:200]}|"
+            f"{input_tokens}|{output_tokens}|{total_tokens}"
+        )
+        if message_key in self._counted_usage_keys:
+            return
+        self._counted_usage_keys.add(message_key)
+
+        self.token_usage["input"] += input_tokens
+        self.token_usage["output"] += output_tokens
+        self.token_usage["total"] += total_tokens
+
+    def token_usage_markdown(self):
+        total_tokens = self.token_usage["total"] or (self.token_usage["input"] + self.token_usage["output"])
+        if total_tokens <= 0:
+            return "Token 使用量：—"
+        return (
+            f"Token 使用量：总计 `{total_tokens}`，输入 `{self.token_usage['input']}`，"
+            f"输出 `{self.token_usage['output']}`"
+        )
+
     def handle_chunk(self, chunk):
         messages = chunk.get("messages", [])
         if messages:
             last_message = messages[-1]
+            self.merge_usage(last_message)
             if hasattr(last_message, "content"):
                 self.add_message("Reasoning", extract_content_string(last_message.content))
             else:
@@ -367,6 +409,7 @@ class RunCollector:
     def output_tuple(self, logs):
         return (
             self.run_message,
+            self.token_usage_markdown(),
             self.progress_html(),
             self.status_html(),
             logs,
@@ -381,7 +424,7 @@ class RunCollector:
             self.reports["final_trade_decision"],
             self.full_report,
             self.output_dir,
-            self.pdf_path,
+            self.exported_md_path,
         )
 
 
@@ -402,7 +445,7 @@ def build_run_config(market_profile, ticker, trade_date, llm_provider, backend_u
     return config
 
 
-def build_config_json(market_profile, ticker, trade_date, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, results_dir):
+def build_config_json(market_profile, ticker, trade_date, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, results_dir, md_export_dir):
     payload = {
         "ticker": (ticker or "").strip().upper(),
         "trade_date": (trade_date or "").strip(),
@@ -416,6 +459,7 @@ def build_config_json(market_profile, ticker, trade_date, llm_provider, backend_
         "max_debate_rounds": int(research_depth),
         "max_risk_discuss_rounds": int(research_depth),
         "results_dir": (results_dir or DEFAULT_CONFIG["results_dir"]).strip(),
+        "md_export_dir": (md_export_dir or "").strip(),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -427,7 +471,7 @@ def analyst_choices_for_market(market_profile):
 
 def load_config_file(file_path):
     if not file_path:
-        return [gr.update() for _ in range(11)]
+        return [gr.update() for _ in range(12)]
     data = json.loads(Path(file_path).read_text())
     market = data.get("market_profile", "cn_a_share")
     supported = MARKET_PROFILES.get(market, MARKET_PROFILES["cn_a_share"])["supported_analysts"]
@@ -439,6 +483,7 @@ def load_config_file(file_path):
         data.get("ticker", MARKET_PROFILES.get(market, MARKET_PROFILES["cn_a_share"])["default_ticker"]),
         data.get("trade_date", datetime.now().strftime("%Y-%m-%d")),
         data.get("results_dir", DEFAULT_CONFIG["results_dir"]),
+        data.get("md_export_dir", DEFAULT_CONFIG.get("md_export_dir", "")),
         data.get("llm_provider", "ollama"),
         data.get("backend_url", PROVIDER_DEFAULTS[data.get("llm_provider", "ollama")]["backend_url"]),
         data.get("quick_think_llm", PROVIDER_DEFAULTS[data.get("llm_provider", "ollama")]["quick_model"]),
@@ -593,62 +638,43 @@ def build_full_report_markdown(collector):
     return "\n".join(lines).strip()
 
 
-def generate_pdf_report(collector, output_dir, full_report_markdown):
-    try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-        from reportlab.pdfgen import canvas
-    except ImportError as exc:
-        raise RuntimeError("缺少 reportlab 依赖，请先安装最新项目依赖后再导出 PDF") from exc
+def export_full_report_markdown(collector, md_path):
+    export_dir = (collector.selections.get("md_export_dir") or "").strip()
+    if not export_dir:
+        collector.exported_md_path = str(md_path)
+        return
 
-    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+    # Expand ~ to home directory
+    export_dir = os.path.expanduser(export_dir)
 
-    ticker = collector.selections.get("ticker", "")
-    display_name = collector.selections.get("display_name") or ticker
-    safe_name = _safe_filename_part(display_name)
-    safe_ticker = _safe_filename_part(ticker)
-    filename_parts = [p for p in ["analysis_report", safe_name, safe_ticker] if p]
-    pdf_path = output_dir / ("_".join(filename_parts) + ".pdf")
-    pdf = canvas.Canvas(str(pdf_path), pagesize=A4)
-    page_width, page_height = A4
-    margin_x = 48
-    margin_top = 56
-    margin_bottom = 50
-    line_height = 16
-    content_width_chars = 34
-    y = page_height - margin_top
+    # Detect Windows drive-letter paths (e.g. D:/xxx or D:\\xxx)
+    win_drive_match = re.match(r'^([a-zA-Z]):[/\\]', export_dir)
+    if win_drive_match:
+        drive_letter = win_drive_match.group(1).lower()
+        wsl_mount = f"/mnt/{drive_letter}"
+        if os.path.isdir(wsl_mount):
+            # WSL environment: map D:/xxx -> /mnt/d/xxx
+            export_dir = wsl_mount + export_dir[2:]
+        else:
+            # Pure Linux: treat as absolute to avoid creating a "D:" folder inside project
+            # Inform user in the run messages
+            abs_path = str(Path(export_dir).resolve())
+            collector.add_message(
+                "系统",
+                f"检测到 Windows 路径 '{collector.selections.get('md_export_dir')}'，当前为非 WSL Linux 环境。"
+                f"文件将保存到绝对路径：{abs_path}。如需保存到 Windows 盘符，请使用 WSL 或填写 Linux 绝对路径（如 /home/xxx/reports）。"
+            )
+            export_dir = abs_path
 
-    def ensure_space(required_lines=1):
-        nonlocal y
-        if y - (required_lines * line_height) < margin_bottom:
-            pdf.showPage()
-            pdf.setFont("STSong-Light", 11)
-            y = page_height - margin_top
+    target_dir = Path(export_dir)
+    # Ensure absolute path so it never falls back to project directory
+    if not target_dir.is_absolute():
+        target_dir = target_dir.resolve()
 
-    def write_lines(lines, font_size=11):
-        nonlocal y
-        pdf.setFont("STSong-Light", font_size)
-        for raw_line in lines:
-            wrapped_lines = _wrap_pdf_line(_normalize_pdf_line(raw_line), content_width_chars)
-            ensure_space(len(wrapped_lines))
-            for wrapped in wrapped_lines:
-                pdf.drawString(margin_x, y, wrapped)
-                y -= line_height
-
-    if display_name and display_name != ticker:
-        title = f"TradingAgents 分析报告 - {display_name}（{ticker}）"
-    else:
-        title = f"TradingAgents 分析报告 - {ticker}"
-    pdf.setTitle(title)
-    pdf.setAuthor("TradingAgents")
-    pdf.setFont("STSong-Light", 16)
-    pdf.drawString(margin_x, y, title)
-    y -= 28
-    write_lines(full_report_markdown.splitlines())
-
-    pdf.save()
-    return str(pdf_path)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / md_path.name
+    target_path.write_text(collector.full_report)
+    collector.exported_md_path = str(target_path)
 
 
 def persist_outputs(collector, logs, results_dir):
@@ -664,7 +690,8 @@ def persist_outputs(collector, logs, results_dir):
     safe_name = _safe_filename_part(collector.selections.get("display_name") or collector.selections["ticker"])
     safe_ticker = _safe_filename_part(collector.selections["ticker"])
     md_filename_parts = [p for p in ["full_report", safe_name, safe_ticker] if p]
-    (output_dir / ("_".join(md_filename_parts) + ".md")).write_text(collector.full_report)
+    md_path = output_dir / ("_".join(md_filename_parts) + ".md")
+    md_path.write_text(collector.full_report)
     for key, value in collector.reports.items():
         if value:
             (reports_dir / f"{key}.md").write_text(value)
@@ -673,10 +700,10 @@ def persist_outputs(collector, logs, results_dir):
         (output_dir / "processed_decision.txt").write_text(str(collector.decision))
     collector.output_dir = str(output_dir)
     try:
-        collector.pdf_path = generate_pdf_report(collector, output_dir, collector.full_report)
+        export_full_report_markdown(collector, md_path)
     except Exception as exc:
-        collector.pdf_path = None
-        collector.add_message("系统", f"PDF 导出失败：{exc}")
+        collector.exported_md_path = str(md_path)
+        collector.add_message("系统", f"MD 额外导出失败：{exc}")
 
 
 _A_SHARE_NAME_MAP_CACHE = None
@@ -880,19 +907,43 @@ def parse_ticker_list(tickers_text):
     return result
 
 
-def _extract_decision_label(final_decision_md):
-    """从最终决策文本中粗略提取 买入/卖出/持有。"""
-    if not final_decision_md:
+def _decision_label_from_token(token):
+    normalized = str(token or "").strip().upper()
+    if normalized == "BUY" or normalized == "买入":
+        return "🟢 买入"
+    if normalized == "SELL" or normalized == "卖出":
+        return "🔴 卖出"
+    if normalized == "HOLD" or normalized == "持有":
+        return "🟡 持有"
+    return ""
+
+
+def _extract_decision_label(decision_text):
+    """优先从明确的最终决策段落中提取 买入/卖出/持有，避免正文关键词误判。"""
+    if not decision_text:
         return ""
-    text = str(final_decision_md)
-    # 中文优先
-    for kw, label in [("买入", "🟢 买入"), ("卖出", "🔴 卖出"), ("持有", "🟡 持有")]:
-        if kw in text:
-            return label
-    # 英文兜底
-    for kw, label in [("BUY", "🟢 买入"), ("SELL", "🔴 卖出"), ("HOLD", "🟡 持有")]:
-        if re.search(rf"\b{kw}\b", text, re.IGNORECASE):
-            return label
+    text = str(decision_text)
+
+    explicit_patterns = [
+        r"##\s*处理后的最终决策\s*(?:\n|\r|\r\n)+\s*[*`#>\- ]*(BUY|SELL|HOLD|买入|卖出|持有)\b",
+        r"FINAL\s+TRANSACTION\s+PROPOSAL\s*[:：]\s*\**\s*(BUY|SELL|HOLD)\b",
+        r"(?:最终决策|最终建议|操作建议|明确建议|组合经理决策)[:：\s]*\**\s*(BUY|SELL|HOLD|买入|卖出|持有)\b",
+    ]
+    for pattern in explicit_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            label = _decision_label_from_token(match.group(1))
+            if label:
+                return label
+
+    tail_text = "\n".join(text.strip().splitlines()[-8:])
+    for pattern in [r"\b(BUY|SELL|HOLD)\b", r"(买入|卖出|持有)"]:
+        matches = re.findall(pattern, tail_text, re.IGNORECASE)
+        if matches:
+            label = _decision_label_from_token(matches[-1])
+            if label:
+                return label
+
     return ""
 
 
@@ -908,8 +959,6 @@ def _build_batch_summary_md(batch_rows, current_idx, total):
     if not batch_rows and current_idx == 0:
         return ""
     lines = [
-        f"## 批量分析进度：{current_idx} / {total}",
-        "",
         "| # | 输入 | 代码 | 名称 | 行业 | 概念板块 | 状态 | 决策 | 输出目录 |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
@@ -923,7 +972,7 @@ def _build_batch_summary_md(batch_rows, current_idx, total):
     return "\n".join(lines)
 
 
-def run_batch_analysis(market_profile, tickers_text, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key):
+def run_batch_analysis(market_profile, tickers_text, trade_date, results_dir, md_export_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key):
     """批量分析入口：遍历多个 ticker，逐个调用单股分析逻辑，累计可下载文件。"""
     raw_items = parse_ticker_list(tickers_text)
     if not raw_items:
@@ -965,7 +1014,7 @@ def run_batch_analysis(market_profile, tickers_text, trade_date, results_dir, ll
 
         try:
             for output_tuple in _run_single_analysis(
-                market_profile, ticker, trade_date, results_dir, llm_provider, backend_url,
+                market_profile, ticker, trade_date, results_dir, md_export_dir, llm_provider, backend_url,
                 quick_model, deep_model, embedding_model, research_depth, analysts, api_key,
                 display_name=name,
             ):
@@ -983,22 +1032,24 @@ def run_batch_analysis(market_profile, tickers_text, trade_date, results_dir, ll
         # 单股完成后，提取产出文件 + 决策
         if last_output is not None:
             out_dir = last_output[-2]
-            pdf_path = last_output[-1]
-            final_decision_md = last_output[12]  # final_decision 在输出元组中的位置
+            exported_md_path = last_output[-1]
+            final_decision_md = last_output[13]
+            full_report_md = last_output[14]
             batch_rows[-1]["output_dir"] = out_dir or ""
-            batch_rows[-1]["decision"] = _extract_decision_label(final_decision_md) or "—"
+            batch_rows[-1]["decision"] = _extract_decision_label(full_report_md) or _extract_decision_label(final_decision_md) or "—"
             industry, concepts = resolve_a_share_sector_tags(ticker, market_profile)
             batch_rows[-1]["industry"] = industry or "—"
             batch_rows[-1]["concepts"] = concepts or "—"
 
             ticker_files = []
-            if pdf_path and Path(pdf_path).exists():
-                ticker_files.append(pdf_path)
+            if exported_md_path and Path(exported_md_path).exists():
+                ticker_files.append(exported_md_path)
             if out_dir:
-                # 找一份带名称的 md 报告（优先），找不到再退回 full_report.md
                 full_md_candidates = sorted(Path(out_dir).glob("full_report*.md"))
                 if full_md_candidates:
-                    ticker_files.append(str(full_md_candidates[0]))
+                    candidate = str(full_md_candidates[0])
+                    if candidate not in ticker_files:
+                        ticker_files.append(candidate)
             batch_files.extend(ticker_files)
             batch_rows[-1]["status"] = "success" if ticker_files else "failed"
             summary_md = _build_batch_summary_md(batch_rows, idx, len(resolved))
@@ -1013,7 +1064,7 @@ def run_batch_analysis(market_profile, tickers_text, trade_date, results_dir, ll
         yield tuple(final_tuple) + (summary_md, batch_files)
 
 
-def _run_single_analysis(market_profile, ticker, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key, display_name=None):
+def _run_single_analysis(market_profile, ticker, trade_date, results_dir, md_export_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key, display_name=None):
     load_dotenv(override=True)
     ticker = (ticker or "").strip().upper()
     display_name = (display_name or "").strip() or ticker
@@ -1038,6 +1089,7 @@ def _run_single_analysis(market_profile, ticker, trade_date, results_dir, llm_pr
         "display_name": display_name,
         "trade_date": trade_date,
         "results_dir": (results_dir or DEFAULT_CONFIG["results_dir"]).strip(),
+        "md_export_dir": (md_export_dir or "").strip(),
         "llm_provider": llm_provider,
         "backend_url": (backend_url or "").strip(),
         "quick_model": (quick_model or "").strip(),
@@ -1056,7 +1108,7 @@ def _run_single_analysis(market_profile, ticker, trade_date, results_dir, llm_pr
     yield collector.output_tuple(log_buffer.content())
 
     try:
-        config_kwargs = {k: v for k, v in selections.items() if k != "display_name"}
+        config_kwargs = {k: v for k, v in selections.items() if k not in {"display_name", "md_export_dir"}}
         config = build_run_config(**config_kwargs, api_key=api_key)
         with redirect_stdout(log_buffer), redirect_stderr(log_buffer):
             graph = TradingAgentsGraph(selected_analysts=selections["analysts"], debug=False, config=config)
@@ -1125,6 +1177,7 @@ def build_app():
                 )
                 trade_date = gr.Textbox(label="日期", value=datetime.now().strftime("%Y-%m-%d"))
                 results_dir = gr.Textbox(label="结果目录", value=DEFAULT_CONFIG["results_dir"])
+                md_export_dir = gr.Textbox(label="MD 自动保存目录（本地文件夹路径）", value=DEFAULT_CONFIG.get("md_export_dir", ""), placeholder="例如：/home/yourname/reports；留空则仅保存在结果目录中")
                 llm_provider = gr.Dropdown(label="LLM 提供商", choices=provider_choices, value=default_provider)
                 backend_url = gr.Textbox(label="后端地址", value=PROVIDER_DEFAULTS[default_provider]["backend_url"])
                 api_key = gr.Textbox(label="API Key", type="password", value=os.getenv("OPENAI_API_KEY", ""))
@@ -1135,10 +1188,11 @@ def build_app():
                 analysts = gr.CheckboxGroup(label="分析师团队", choices=analyst_choices_for_market(default_market), value=["market", "news", "fundamentals"])
                 run_btn = gr.Button("启动分析", variant="primary", size="lg")
                 output_dir = gr.Textbox(label="最近输出目录", interactive=False)
-                pdf_file = gr.File(label="报告 PDF", interactive=False)
+                exported_md_path = gr.Textbox(label="最近导出的 MD 路径", interactive=False)
 
             with gr.Column(scale=2):
                 run_state = gr.Markdown("未运行")
+                token_usage_md = gr.Markdown("Token 使用量：—")
                 progress_html = gr.HTML(value="")
                 status_html = gr.HTML(value="")
                 with gr.Tabs():
@@ -1158,7 +1212,7 @@ def build_app():
                         final_decision = gr.Markdown(label="组合管理决策")
                         full_report = gr.Markdown(label="完整报告")
                     with gr.Tab("批量结果"):
-                        gr.Markdown("批量分析完成的股票列表与可下载报告。每个股票会生成 PDF 与 Markdown 报告。")
+                        gr.Markdown("批量分析完成的股票列表与可下载 Markdown 报告。")
                         batch_summary_md = gr.Markdown(value="（尚未运行）")
                         batch_files_dl = gr.Files(label="下载已完成的报告文件", interactive=False)
                     with gr.Tab("报告问答"):
@@ -1177,7 +1231,7 @@ def build_app():
                             qa_send_btn = gr.Button("发送", variant="primary")
                             qa_clear_btn = gr.Button("清空对话")
 
-        config_inputs = [market_profile, ticker, trade_date, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, results_dir]
+        config_inputs = [market_profile, ticker, trade_date, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, results_dir, md_export_dir]
         config_outputs = config_json
         for component in config_inputs:
             component.change(fn=build_config_json, inputs=config_inputs, outputs=config_outputs)
@@ -1186,7 +1240,7 @@ def build_app():
         config_file.change(
             fn=load_config_file,
             inputs=config_file,
-            outputs=[market_profile, ticker, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts],
+            outputs=[market_profile, ticker, trade_date, results_dir, md_export_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts],
         )
         market_profile.change(fn=apply_market_defaults, inputs=[market_profile, analysts], outputs=[ticker, analysts])
         llm_provider.change(fn=apply_provider_defaults, inputs=llm_provider, outputs=[backend_url, quick_model, deep_model, embedding_model])
@@ -1194,8 +1248,8 @@ def build_app():
 
         run_btn.click(
             fn=run_batch_analysis,
-            inputs=[market_profile, ticker, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key],
-            outputs=[run_state, progress_html, status_html, logs, messages, tools, market_report, sentiment_report, news_report, fundamentals_report, investment_plan, trader_plan, final_decision, full_report, output_dir, pdf_file, batch_summary_md, batch_files_dl],
+            inputs=[market_profile, ticker, trade_date, results_dir, md_export_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key],
+            outputs=[run_state, token_usage_md, progress_html, status_html, logs, messages, tools, market_report, sentiment_report, news_report, fundamentals_report, investment_plan, trader_plan, final_decision, full_report, output_dir, exported_md_path, batch_summary_md, batch_files_dl],
         ).then(
             fn=capture_qa_context,
             inputs=[full_report, llm_provider, backend_url, quick_model, deep_model, api_key],

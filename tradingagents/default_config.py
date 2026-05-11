@@ -9,6 +9,8 @@ DEFAULT_CONFIG = {
         "dataflows/data_cache",
     ),
     "market_profile": "us_equity",
+    # Markdown auto-save directory
+    "md_export_dir": r"D:\Others\theA",
     # LLM settings
     "llm_provider": "openai",
     "deep_think_llm": "o4-mini",

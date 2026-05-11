@@ -1,0 +1,126 @@
+nohup: 忽略输入
+/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/langgraph/checkpoint/serde/encrypted.py:5: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.
+  from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+Traceback (most recent call last):
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/queueing.py", line 867, in process_events
+    response = await route_utils.call_process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/route_utils.py", line 374, in call_process_api
+    output = await app.get_blocks().process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 2173, in process_api
+    inputs = await self.preprocess_data(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1755, in preprocess_data
+    self.validate_inputs(block_fn, inputs)
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1737, in validate_inputs
+    raise ValueError(
+ValueError: An event handler (build_config_json) didn't receive enough input values (needed: 12, got: 11).
+Check if the event handler calls a Javascript function, and make sure its return value is correct.
+Wanted inputs:
+    [<gradio.components.dropdown.Dropdown object at 0x70c1fb6d3cd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3dc0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3be0>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3c40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3ee0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f10>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3e50>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3fa0>, <gradio.components.checkboxgroup.CheckboxGroup object at 0x70c1fb6d3fd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3eb0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3df0>]
+Received inputs:
+    ["cn_a_share", "德明利、中国能建、中国卫星、中国电建、永泰能源、中国石化、协鑫集成、杭氧股份、宏达股份、七彩化学、中化国际、新疆天业、中泰化学、云天化、万华化学、华能国际、华电国际、中国海油、农业银行、招商银行、比亚迪、贵州茅台、泸州老窖、五粮液、中科曙光、五洲新春、海昌新材、中国长城、海光信息、信科移动-U、航天发展、有研新材、新易盛、中际旭创、中天科技、联讯仪器、云南锗业、光迅科技、晶科科技、西藏矿业、三花智控、德力佳、长江电力、英维克、兆易创新、中油资本、天孚通信、中国核建、中南文化、金开新能、中恒电气、协鑫能科、节能风电、金宏气体", "2026-05-11", "lucen_openai", "https://lucen.cc", "gpt-5.5", "gpt-5.5", "text-embedding-3-small", 1, ['market', 'news', 'fundamentals'], "./results"]
+Traceback (most recent call last):
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/queueing.py", line 867, in process_events
+    response = await route_utils.call_process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/route_utils.py", line 374, in call_process_api
+    output = await app.get_blocks().process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 2173, in process_api
+    inputs = await self.preprocess_data(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1755, in preprocess_data
+    self.validate_inputs(block_fn, inputs)
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1737, in validate_inputs
+    raise ValueError(
+ValueError: An event handler (build_config_json) didn't receive enough input values (needed: 12, got: 11).
+Check if the event handler calls a Javascript function, and make sure its return value is correct.
+Wanted inputs:
+    [<gradio.components.dropdown.Dropdown object at 0x70c1fb6d3cd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3dc0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3be0>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3c40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3ee0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f10>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3e50>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3fa0>, <gradio.components.checkboxgroup.CheckboxGroup object at 0x70c1fb6d3fd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3eb0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3df0>]
+Received inputs:
+    ["cn_a_share", "德明利、中国能建、中国卫星、中国电建、永泰能源、中国石化、协鑫集成、杭氧股份、宏达股份、七彩化学、中化国际、新疆天业、中泰化学、云天化、万华化学、华能国际、华电国际、中国海油、、比亚迪、贵州茅台、泸州老窖、五粮液、中科曙光、五洲新春、海昌新材、中国长城、海光信息、信科移动-U、航天发展、有研新材、新易盛、中际旭创、中天科技、联讯仪器、云南锗业、光迅科技、晶科科技、西藏矿业、三花智控、德力佳、长江电力、英维克、兆易创新、中油资本、天孚通信、中国核建、中南文化、金开新能、中恒电气、协鑫能科、节能风电、金宏气体", "2026-05-11", "lucen_openai", "https://lucen.cc", "gpt-5.5", "gpt-5.5", "text-embedding-3-small", 1, ['market', 'news', 'fundamentals'], "./results"]
+Traceback (most recent call last):
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/queueing.py", line 867, in process_events
+    response = await route_utils.call_process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/route_utils.py", line 374, in call_process_api
+    output = await app.get_blocks().process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 2173, in process_api
+    inputs = await self.preprocess_data(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1755, in preprocess_data
+    self.validate_inputs(block_fn, inputs)
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1737, in validate_inputs
+    raise ValueError(
+ValueError: An event handler (build_config_json) didn't receive enough input values (needed: 12, got: 11).
+Check if the event handler calls a Javascript function, and make sure its return value is correct.
+Wanted inputs:
+    [<gradio.components.dropdown.Dropdown object at 0x70c1fb6d3cd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3dc0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3be0>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3c40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3ee0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f10>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3e50>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3fa0>, <gradio.components.checkboxgroup.CheckboxGroup object at 0x70c1fb6d3fd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3eb0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3df0>]
+Received inputs:
+    ["cn_a_share", "德明利、中国能建、中国卫星、中国电建、永泰能源、中国石化、协鑫集成、杭氧股份、宏达股份、七彩化学、中化国际、新疆天业、中泰化学、云天化、万华化学、华能国际、华电国际、中国海油、比亚迪、贵州茅台、泸州老窖、五粮液、中科曙光、五洲新春、海昌新材、中国长城、海光信息、信科移动-U、航天发展、有研新材、新易盛、中际旭创、中天科技、联讯仪器、云南锗业、光迅科技、晶科科技、西藏矿业、三花智控、德力佳、长江电力、英维克、兆易创新、中油资本、天孚通信、中国核建、中南文化、金开新能、中恒电气、协鑫能科、节能风电、金宏气体", "2026-05-11", "lucen_openai", "https://lucen.cc", "gpt-5.5", "gpt-5.5", "text-embedding-3-small", 1, ['market', 'news', 'fundamentals'], "./results"]
+Traceback (most recent call last):
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/queueing.py", line 867, in process_events
+    response = await route_utils.call_process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/route_utils.py", line 374, in call_process_api
+    output = await app.get_blocks().process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 2173, in process_api
+    inputs = await self.preprocess_data(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1755, in preprocess_data
+    self.validate_inputs(block_fn, inputs)
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1737, in validate_inputs
+    raise ValueError(
+ValueError: An event handler (build_config_json) didn't receive enough input values (needed: 12, got: 11).
+Check if the event handler calls a Javascript function, and make sure its return value is correct.
+Wanted inputs:
+    [<gradio.components.dropdown.Dropdown object at 0x70c1fb6d3cd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3dc0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3be0>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3c40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3ee0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f10>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3e50>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3fa0>, <gradio.components.checkboxgroup.CheckboxGroup object at 0x70c1fb6d3fd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3eb0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3df0>]
+Received inputs:
+    ["cn_a_share", "德明利、中国能建、中国卫星、中国电建、永泰能源、中国石化、协鑫集成、杭氧股份、宏达股份、七彩化学、中化国际、新疆天业、中泰化学、云天化、万华化学、华能国际、华电国际、中国海油、比亚迪、、中科曙光、五洲新春、海昌新材、中国长城、海光信息、信科移动-U、航天发展、有研新材、新易盛、中际旭创、中天科技、联讯仪器、云南锗业、光迅科技、晶科科技、西藏矿业、三花智控、德力佳、长江电力、英维克、兆易创新、中油资本、天孚通信、中国核建、中南文化、金开新能、中恒电气、协鑫能科、节能风电、金宏气体", "2026-05-11", "lucen_openai", "https://lucen.cc", "gpt-5.5", "gpt-5.5", "text-embedding-3-small", 1, ['market', 'news', 'fundamentals'], "./results"]
+Traceback (most recent call last):
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/queueing.py", line 867, in process_events
+    response = await route_utils.call_process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/route_utils.py", line 374, in call_process_api
+    output = await app.get_blocks().process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 2173, in process_api
+    inputs = await self.preprocess_data(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1755, in preprocess_data
+    self.validate_inputs(block_fn, inputs)
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1737, in validate_inputs
+    raise ValueError(
+ValueError: An event handler (build_config_json) didn't receive enough input values (needed: 12, got: 11).
+Check if the event handler calls a Javascript function, and make sure its return value is correct.
+Wanted inputs:
+    [<gradio.components.dropdown.Dropdown object at 0x70c1fb6d3cd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3dc0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3be0>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3c40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3ee0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f10>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3e50>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3fa0>, <gradio.components.checkboxgroup.CheckboxGroup object at 0x70c1fb6d3fd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3eb0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3df0>]
+Received inputs:
+    ["cn_a_share", "德明利、中国能建、中国卫星、中国电建、永泰能源、中国石化、协鑫集成、杭氧股份、宏达股份、七彩化学、中化国际、新疆天业、中泰化学、云天化、万华化学、华能国际、华电国际、中国海油、比亚迪、中科曙光、五洲新春、海昌新材、中国长城、海光信息、信科移动-U、航天发展、有研新材、新易盛、中际旭创、中天科技、联讯仪器、云南锗业、光迅科技、晶科科技、西藏矿业、三花智控、德力佳、长江电力、英维克、兆易创新、中油资本、天孚通信、中国核建、中南文化、金开新能、中恒电气、协鑫能科、节能风电、金宏气体", "2026-05-11", "lucen_openai", "https://lucen.cc", "gpt-5.5", "gpt-5.5", "text-embedding-3-small", 1, ['market', 'news', 'fundamentals'], "./results"]
+Traceback (most recent call last):
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/queueing.py", line 867, in process_events
+    response = await route_utils.call_process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/route_utils.py", line 374, in call_process_api
+    output = await app.get_blocks().process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 2173, in process_api
+    inputs = await self.preprocess_data(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1755, in preprocess_data
+    self.validate_inputs(block_fn, inputs)
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1737, in validate_inputs
+    raise ValueError(
+ValueError: An event handler (run_batch_analysis) didn't receive enough input values (needed: 13, got: 6).
+Check if the event handler calls a Javascript function, and make sure its return value is correct.
+Wanted inputs:
+    [<gradio.components.dropdown.Dropdown object at 0x70c1fb6d3cd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3dc0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3be0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3eb0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3df0>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3c40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3ee0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f10>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3e50>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3fa0>, <gradio.components.checkboxgroup.CheckboxGroup object at 0x70c1fb6d3fd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3d60>]
+Received inputs:
+    [None, "lucen_openai", "https://lucen.cc", "gpt-5.5", "gpt-5.5", "sk-6784a2e57dffb9fc54fa5875ecf7f641d45d05a8485254f504e0434d22ec07a5"]
+Traceback (most recent call last):
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/queueing.py", line 867, in process_events
+    response = await route_utils.call_process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/route_utils.py", line 374, in call_process_api
+    output = await app.get_blocks().process_api(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 2173, in process_api
+    inputs = await self.preprocess_data(
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1755, in preprocess_data
+    self.validate_inputs(block_fn, inputs)
+  File "/mnt/Uptec777/Projects/TradingAgents/venv/lib/python3.10/site-packages/gradio/blocks.py", line 1737, in validate_inputs
+    raise ValueError(
+ValueError: An event handler (run_batch_analysis) didn't receive enough input values (needed: 13, got: 6).
+Check if the event handler calls a Javascript function, and make sure its return value is correct.
+Wanted inputs:
+    [<gradio.components.dropdown.Dropdown object at 0x70c1fb6d3cd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3dc0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3be0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3eb0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3df0>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3c40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f40>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3ee0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3f10>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3e50>, <gradio.components.dropdown.Dropdown object at 0x70c1fb6d3fa0>, <gradio.components.checkboxgroup.CheckboxGroup object at 0x70c1fb6d3fd0>, <gradio.components.textbox.Textbox object at 0x70c1fb6d3d60>]
+Received inputs:
+    [None, "lucen_openai", "https://lucen.cc", "gpt-5.5", "gpt-5.5", "sk-6784a2e57dffb9fc54fa5875ecf7f641d45d05a8485254f504e0434d22ec07a5"]
+启动 Gradio 服务，端口: 7860
+* Running on local URL:  http://127.0.0.1:7860
+* To create a public link, set `share=True` in `launch()`.
+  0%|          | 0/16 [00:00<?, ?it/s]  6%|▋         | 1/16 [00:00<00:04,  3.52it/s] 12%|█▎        | 2/16 [00:00<00:04,  3.49it/s] 19%|█▉        | 3/16 [00:00<00:03,  3.61it/s] 25%|██▌       | 4/16 [00:01<00:03,  3.77it/s] 31%|███▏      | 5/16 [00:01<00:02,  3.86it/s] 38%|███▊      | 6/16 [00:01<00:02,  3.41it/s] 44%|████▍     | 7/16 [00:02<00:02,  3.25it/s] 50%|█████     | 8/16 [00:02<00:02,  3.27it/s] 56%|█████▋    | 9/16 [00:02<00:02,  3.35it/s] 62%|██████▎   | 10/16 [00:02<00:01,  3.60it/s] 69%|██████▉   | 11/16 [00:03<00:01,  3.64it/s] 75%|███████▌  | 12/16 [00:03<00:01,  3.60it/s] 81%|████████▏ | 13/16 [00:03<00:00,  3.63it/s] 88%|████████▊ | 14/16 [00:03<00:00,  3.81it/s] 94%|█████████▍| 15/16 [00:04<00:00,  3.83it/s]100%|██████████| 16/16 [00:04<00:00,  3.76it/s]                                               
