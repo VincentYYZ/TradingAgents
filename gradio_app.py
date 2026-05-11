@@ -3,6 +3,7 @@ import json
 import os
 import re
 import socket
+import threading
 import textwrap
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
@@ -563,11 +564,12 @@ def _wrap_pdf_line(line, width=34):
 
 def build_full_report_markdown(collector):
     lines = [
-        f"# TradingAgents 完整分析报告（{collector.selections['ticker']}）",
+        f"# TradingAgents 完整分析报告（{collector.selections.get('display_name') or collector.selections['ticker']} - {collector.selections['ticker']}）",
         "",
         "## 任务信息",
         f"- 市场：{collector.selections['market_profile']}",
         f"- 股票代码：{collector.selections['ticker']}",
+        f"- 公司名称：{collector.selections.get('display_name') or collector.selections['ticker']}",
         f"- 分析日期：{collector.selections['trade_date']}",
         f"- LLM 提供商：{collector.selections['llm_provider']}",
         "",
@@ -602,7 +604,12 @@ def generate_pdf_report(collector, output_dir, full_report_markdown):
 
     pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 
-    pdf_path = output_dir / "analysis_report.pdf"
+    ticker = collector.selections.get("ticker", "")
+    display_name = collector.selections.get("display_name") or ticker
+    safe_name = _safe_filename_part(display_name)
+    safe_ticker = _safe_filename_part(ticker)
+    filename_parts = [p for p in ["analysis_report", safe_name, safe_ticker] if p]
+    pdf_path = output_dir / ("_".join(filename_parts) + ".pdf")
     pdf = canvas.Canvas(str(pdf_path), pagesize=A4)
     page_width, page_height = A4
     margin_x = 48
@@ -629,7 +636,10 @@ def generate_pdf_report(collector, output_dir, full_report_markdown):
                 pdf.drawString(margin_x, y, wrapped)
                 y -= line_height
 
-    title = f"TradingAgents 分析报告 - {collector.selections['ticker']}"
+    if display_name and display_name != ticker:
+        title = f"TradingAgents 分析报告 - {display_name}（{ticker}）"
+    else:
+        title = f"TradingAgents 分析报告 - {ticker}"
     pdf.setTitle(title)
     pdf.setAuthor("TradingAgents")
     pdf.setFont("STSong-Light", 16)
@@ -651,7 +661,10 @@ def persist_outputs(collector, logs, results_dir):
     (output_dir / "messages.txt").write_text("\n".join(collector.messages))
     (output_dir / "tool_calls.txt").write_text("\n".join(collector.tools))
     collector.full_report = build_full_report_markdown(collector)
-    (output_dir / "full_report.md").write_text(collector.full_report)
+    safe_name = _safe_filename_part(collector.selections.get("display_name") or collector.selections["ticker"])
+    safe_ticker = _safe_filename_part(collector.selections["ticker"])
+    md_filename_parts = [p for p in ["full_report", safe_name, safe_ticker] if p]
+    (output_dir / ("_".join(md_filename_parts) + ".md")).write_text(collector.full_report)
     for key, value in collector.reports.items():
         if value:
             (reports_dir / f"{key}.md").write_text(value)
@@ -666,92 +679,344 @@ def persist_outputs(collector, logs, results_dir):
         collector.add_message("系统", f"PDF 导出失败：{exc}")
 
 
+_A_SHARE_NAME_MAP_CACHE = None
+_A_SHARE_INDUSTRY_BY_CODE = {}
+_A_SHARE_CONCEPTS_BY_CODE = {}
+_A_SHARE_INDUSTRY_BOARD_NAMES = None
+_A_SHARE_CONCEPT_BOARD_NAMES = None
+_A_SHARE_INDUSTRY_SCANNED_BOARDS = set()
+_A_SHARE_CONCEPT_SCANNED_BOARDS = set()
+_A_SHARE_BOARD_CACHE_LOCK = threading.Lock()
+
+
+def _get_a_share_name_map():
+    """加载 A 股代码<->名称映射，惰性缓存。"""
+    global _A_SHARE_NAME_MAP_CACHE
+    if _A_SHARE_NAME_MAP_CACHE is not None:
+        return _A_SHARE_NAME_MAP_CACHE
+    code_to_name, name_to_code = {}, {}
+    try:
+        import akshare as ak
+        df = ak.stock_info_a_code_name()
+        for _, row in df.iterrows():
+            code = str(row["code"]).strip().zfill(6)
+            name = str(row["name"]).strip()
+            if code and name:
+                code_to_name[code] = name
+                name_to_code[name] = code
+    except Exception as exc:
+        print(f"WARN: 加载 A 股代码名称映射失败: {exc}")
+    _A_SHARE_NAME_MAP_CACHE = (code_to_name, name_to_code)
+    return _A_SHARE_NAME_MAP_CACHE
+
+
+def _normalize_constituent_code(value):
+    digits = re.sub(r"\D", "", str(value or ""))
+    if len(digits) >= 6:
+        return digits[-6:]
+    return ""
+
+
+def _extract_constituent_codes(df):
+    if df is None or getattr(df, "empty", True):
+        return []
+    for column in ["代码", "证券代码", "股票代码", "成分股代码"]:
+        if column in df.columns:
+            codes = []
+            for value in df[column].tolist():
+                code = _normalize_constituent_code(value)
+                if code:
+                    codes.append(code)
+            return codes
+    return []
+
+
+def _get_em_board_names(board_type):
+    global _A_SHARE_INDUSTRY_BOARD_NAMES, _A_SHARE_CONCEPT_BOARD_NAMES
+    with _A_SHARE_BOARD_CACHE_LOCK:
+        if board_type == "industry" and _A_SHARE_INDUSTRY_BOARD_NAMES is not None:
+            return _A_SHARE_INDUSTRY_BOARD_NAMES
+        if board_type == "concept" and _A_SHARE_CONCEPT_BOARD_NAMES is not None:
+            return _A_SHARE_CONCEPT_BOARD_NAMES
+
+    board_names = []
+    try:
+        import akshare as ak
+
+        fetcher = ak.stock_board_industry_name_em if board_type == "industry" else ak.stock_board_concept_name_em
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            df = fetcher()
+        if df is not None and not df.empty and "板块名称" in df.columns:
+            board_names = [str(item).strip() for item in df["板块名称"].tolist() if str(item).strip()]
+    except Exception as exc:
+        print(f"WARN: 加载{board_type}板块名称失败: {exc}")
+
+    with _A_SHARE_BOARD_CACHE_LOCK:
+        if board_type == "industry":
+            _A_SHARE_INDUSTRY_BOARD_NAMES = board_names
+        else:
+            _A_SHARE_CONCEPT_BOARD_NAMES = board_names
+    return board_names
+
+
+def _scan_industry_for_code(code):
+    with _A_SHARE_BOARD_CACHE_LOCK:
+        cached = _A_SHARE_INDUSTRY_BY_CODE.get(code)
+    if cached:
+        return cached
+
+    board_names = _get_em_board_names("industry")
+    if not board_names:
+        return ""
+
+    try:
+        import akshare as ak
+
+        for board_name in board_names:
+            with _A_SHARE_BOARD_CACHE_LOCK:
+                if board_name in _A_SHARE_INDUSTRY_SCANNED_BOARDS:
+                    continue
+            try:
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    df = ak.stock_board_industry_cons_em(symbol=board_name)
+                codes = _extract_constituent_codes(df)
+            except Exception:
+                codes = []
+            with _A_SHARE_BOARD_CACHE_LOCK:
+                _A_SHARE_INDUSTRY_SCANNED_BOARDS.add(board_name)
+                for member_code in codes:
+                    _A_SHARE_INDUSTRY_BY_CODE.setdefault(member_code, board_name)
+                if code in _A_SHARE_INDUSTRY_BY_CODE:
+                    return _A_SHARE_INDUSTRY_BY_CODE[code]
+    except Exception as exc:
+        print(f"WARN: 扫描行业板块失败: {exc}")
+    return ""
+
+
+def _scan_concepts_for_code(code, limit=3):
+    with _A_SHARE_BOARD_CACHE_LOCK:
+        cached = list(_A_SHARE_CONCEPTS_BY_CODE.get(code, []))
+    if len(cached) >= limit:
+        return cached[:limit]
+
+    board_names = _get_em_board_names("concept")
+    if not board_names:
+        return cached[:limit]
+
+    try:
+        import akshare as ak
+
+        for board_name in board_names:
+            with _A_SHARE_BOARD_CACHE_LOCK:
+                if board_name in _A_SHARE_CONCEPT_SCANNED_BOARDS:
+                    continue
+            try:
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    df = ak.stock_board_concept_cons_em(symbol=board_name)
+                codes = _extract_constituent_codes(df)
+            except Exception:
+                codes = []
+            with _A_SHARE_BOARD_CACHE_LOCK:
+                _A_SHARE_CONCEPT_SCANNED_BOARDS.add(board_name)
+                for member_code in codes:
+                    bucket = _A_SHARE_CONCEPTS_BY_CODE.setdefault(member_code, [])
+                    if board_name not in bucket:
+                        bucket.append(board_name)
+                cached = list(_A_SHARE_CONCEPTS_BY_CODE.get(code, []))
+                if len(cached) >= limit:
+                    return cached[:limit]
+    except Exception as exc:
+        print(f"WARN: 扫描概念板块失败: {exc}")
+    return list(_A_SHARE_CONCEPTS_BY_CODE.get(code, []))[:limit]
+
+
+def resolve_a_share_sector_tags(code, market_profile, concept_limit=3):
+    if market_profile != "cn_a_share":
+        return "", ""
+    normalized_code = _normalize_constituent_code(code)
+    if not normalized_code:
+        return "", ""
+    industry = _scan_industry_for_code(normalized_code)
+    concepts = _scan_concepts_for_code(normalized_code, limit=concept_limit)
+    return industry or "", "、".join(concepts)
+
+
+def resolve_ticker_and_name(item, market_profile):
+    """把用户输入（代码或名称）解析为 (代码, 名称)。"""
+    item = (item or "").strip()
+    if not item:
+        return None, None
+    if market_profile == "cn_a_share":
+        # 去掉可能的 .SH / .SZ 后缀
+        code_part = item.split(".")[0].strip()
+        code_to_name, name_to_code = _get_a_share_name_map()
+        if code_part.isdigit():
+            code = code_part.zfill(6)
+            return code, code_to_name.get(code, code)
+        # 名称完全匹配
+        if item in name_to_code:
+            return name_to_code[item], item
+        # 名称模糊匹配（包含关系）
+        for name, code in name_to_code.items():
+            if item in name:
+                return code, name
+        # 解析不出来，原样返回
+        return item, item
+    return item.upper(), item.upper()
+
+
 def parse_ticker_list(tickers_text):
-    """从文本中解析多个 ticker，支持逗号/换行/空格/中文分隔符。"""
+    """从文本中解析多个 ticker（原样保留，不做大小写转换以支持中文名称）。"""
     if not tickers_text:
         return []
     raw = re.split(r"[\s,，;；、|]+", tickers_text.strip())
     seen = set()
     result = []
     for item in raw:
-        item = item.strip().upper()
+        item = item.strip()
         if item and item not in seen:
             seen.add(item)
             result.append(item)
     return result
 
 
+def _extract_decision_label(final_decision_md):
+    """从最终决策文本中粗略提取 买入/卖出/持有。"""
+    if not final_decision_md:
+        return ""
+    text = str(final_decision_md)
+    # 中文优先
+    for kw, label in [("买入", "🟢 买入"), ("卖出", "🔴 卖出"), ("持有", "🟡 持有")]:
+        if kw in text:
+            return label
+    # 英文兜底
+    for kw, label in [("BUY", "🟢 买入"), ("SELL", "🔴 卖出"), ("HOLD", "🟡 持有")]:
+        if re.search(rf"\b{kw}\b", text, re.IGNORECASE):
+            return label
+    return ""
+
+
+def _safe_filename_part(text):
+    """把名称中的非法字符替换为下划线，用于文件名。"""
+    if not text:
+        return ""
+    cleaned = re.sub(r"[^\w\u4e00-\u9fa5\-]+", "_", str(text)).strip("_")
+    return cleaned[:60]
+
+
 def _build_batch_summary_md(batch_rows, current_idx, total):
     if not batch_rows and current_idx == 0:
         return ""
-    lines = [f"## 批量分析进度：{current_idx} / {total}", "", "| # | 股票代码 | 状态 | 输出目录 |", "|---|---|---|---|"]
+    lines = [
+        f"## 批量分析进度：{current_idx} / {total}",
+        "",
+        "| # | 输入 | 代码 | 名称 | 行业 | 概念板块 | 状态 | 决策 | 输出目录 |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
     for idx, row in enumerate(batch_rows, 1):
         status_icon = {"success": "✅ 成功", "failed": "❌ 失败", "running": "⏳ 进行中"}.get(row["status"], row["status"])
         out = row.get("output_dir") or ""
-        lines.append(f"| {idx} | {row['ticker']} | {status_icon} | `{out}` |")
+        lines.append(
+            f"| {idx} | {row.get('input', '')} | {row.get('ticker', '')} | {row.get('name', '')} | "
+            f"{row.get('industry', '')} | {row.get('concepts', '')} | {status_icon} | {row.get('decision', '')} | `{out}` |"
+        )
     return "\n".join(lines)
 
 
 def run_batch_analysis(market_profile, tickers_text, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key):
     """批量分析入口：遍历多个 ticker，逐个调用单股分析逻辑，累计可下载文件。"""
-    tickers = parse_ticker_list(tickers_text)
-    if not tickers:
-        raise gr.Error("Ticker 不能为空（可输入多个，使用逗号或换行分隔）")
+    raw_items = parse_ticker_list(tickers_text)
+    if not raw_items:
+        raise gr.Error("Ticker 不能为空（可输入多个，使用逗号或换行分隔；支持代码或公司名称）")
+
+    # 预解析：把用户输入（代码或名称）→ (代码, 名称)
+    resolved = []
+    seen_codes = set()
+    for raw in raw_items:
+        code, name = resolve_ticker_and_name(raw, market_profile)
+        if not code:
+            continue
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+        resolved.append({"input": raw, "ticker": code, "name": name})
+
+    if not resolved:
+        raise gr.Error("无法解析出任何有效的股票代码")
 
     batch_rows = []
     batch_files = []
     last_output = None
 
-    for idx, ticker in enumerate(tickers, 1):
-        batch_rows.append({"ticker": ticker, "status": "running", "output_dir": ""})
-        summary_md = _build_batch_summary_md(batch_rows, idx, len(tickers))
+    for idx, entry in enumerate(resolved, 1):
+        ticker = entry["ticker"]
+        name = entry["name"]
+        batch_rows.append({
+            "input": entry["input"],
+            "ticker": ticker,
+            "name": name,
+            "industry": "",
+            "concepts": "",
+            "status": "running",
+            "decision": "",
+            "output_dir": "",
+        })
+        summary_md = _build_batch_summary_md(batch_rows, idx, len(resolved))
 
         try:
             for output_tuple in _run_single_analysis(
                 market_profile, ticker, trade_date, results_dir, llm_provider, backend_url,
                 quick_model, deep_model, embedding_model, research_depth, analysts, api_key,
+                display_name=name,
             ):
                 last_output = output_tuple
-                # 实时把当前进度+已完成文件加到输出末尾
                 yield output_tuple + (summary_md, batch_files)
         except gr.Error:
             raise
-        except Exception as exc:
+        except Exception:
             batch_rows[-1]["status"] = "failed"
-            summary_md = _build_batch_summary_md(batch_rows, idx, len(tickers))
+            summary_md = _build_batch_summary_md(batch_rows, idx, len(resolved))
             if last_output is not None:
                 yield last_output + (summary_md, batch_files)
             continue
 
-        # 单股完成后，提取产出文件
+        # 单股完成后，提取产出文件 + 决策
         if last_output is not None:
             out_dir = last_output[-2]
             pdf_path = last_output[-1]
+            final_decision_md = last_output[12]  # final_decision 在输出元组中的位置
             batch_rows[-1]["output_dir"] = out_dir or ""
+            batch_rows[-1]["decision"] = _extract_decision_label(final_decision_md) or "—"
+            industry, concepts = resolve_a_share_sector_tags(ticker, market_profile)
+            batch_rows[-1]["industry"] = industry or "—"
+            batch_rows[-1]["concepts"] = concepts or "—"
+
             ticker_files = []
             if pdf_path and Path(pdf_path).exists():
                 ticker_files.append(pdf_path)
             if out_dir:
-                md_path = Path(out_dir) / "full_report.md"
-                if md_path.exists():
-                    ticker_files.append(str(md_path))
+                # 找一份带名称的 md 报告（优先），找不到再退回 full_report.md
+                full_md_candidates = sorted(Path(out_dir).glob("full_report*.md"))
+                if full_md_candidates:
+                    ticker_files.append(str(full_md_candidates[0]))
             batch_files.extend(ticker_files)
             batch_rows[-1]["status"] = "success" if ticker_files else "failed"
-            summary_md = _build_batch_summary_md(batch_rows, idx, len(tickers))
+            summary_md = _build_batch_summary_md(batch_rows, idx, len(resolved))
             yield last_output + (summary_md, batch_files)
 
     # 最终：把 run_state 改成完成提示
     if last_output is not None:
         final_tuple = list(last_output)
         success_count = sum(1 for r in batch_rows if r["status"] == "success")
-        final_tuple[0] = f"批量分析完成：{success_count}/{len(tickers)} 成功"
-        summary_md = _build_batch_summary_md(batch_rows, len(tickers), len(tickers))
+        final_tuple[0] = f"批量分析完成：{success_count}/{len(resolved)} 成功"
+        summary_md = _build_batch_summary_md(batch_rows, len(resolved), len(resolved))
         yield tuple(final_tuple) + (summary_md, batch_files)
 
 
-def _run_single_analysis(market_profile, ticker, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key):
+def _run_single_analysis(market_profile, ticker, trade_date, results_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key, display_name=None):
     load_dotenv(override=True)
     ticker = (ticker or "").strip().upper()
+    display_name = (display_name or "").strip() or ticker
     trade_date = (trade_date or "").strip()
     api_key = (api_key or "").strip()
     try:
@@ -770,6 +1035,7 @@ def _run_single_analysis(market_profile, ticker, trade_date, results_dir, llm_pr
     selections = {
         "market_profile": market_profile,
         "ticker": ticker,
+        "display_name": display_name,
         "trade_date": trade_date,
         "results_dir": (results_dir or DEFAULT_CONFIG["results_dir"]).strip(),
         "llm_provider": llm_provider,
@@ -782,7 +1048,7 @@ def _run_single_analysis(market_profile, ticker, trade_date, results_dir, llm_pr
     }
     collector = RunCollector(selections)
     collector.run_message = "正在初始化分析任务..."
-    collector.add_message("系统", f"股票代码：{ticker}")
+    collector.add_message("系统", f"股票代码：{ticker}（{display_name}）")
     collector.add_message("系统", f"分析日期：{trade_date}")
     collector.add_message("系统", f"已选分析师：{', '.join(ANALYST_LABELS[item] for item in analysts)}")
     collector.mark_initial_status()
@@ -790,7 +1056,8 @@ def _run_single_analysis(market_profile, ticker, trade_date, results_dir, llm_pr
     yield collector.output_tuple(log_buffer.content())
 
     try:
-        config = build_run_config(**selections, api_key=api_key)
+        config_kwargs = {k: v for k, v in selections.items() if k != "display_name"}
+        config = build_run_config(**config_kwargs, api_key=api_key)
         with redirect_stdout(log_buffer), redirect_stderr(log_buffer):
             graph = TradingAgentsGraph(selected_analysts=selections["analysts"], debug=False, config=config)
             init_state = graph.propagator.create_initial_state(selections["ticker"], selections["trade_date"])
