@@ -103,17 +103,40 @@ class TradingAgentsGraph:
         # Initialize LLMs
         self._disable_local_proxies(self.config.get("backend_url", ""))
         provider = self.config["llm_provider"].lower()
-        if provider in {"openai", "ollama", "openrouter", "vllm", "lucen_openai"}:
+        if provider in {"openai", "ollama", "openrouter", "vllm", "lucen_openai", "luchikey_openai"}:
             api_key = self.config.get("api_key") or os.getenv("OPENAI_API_KEY", "ollama")
+            llm_timeout = float(self.config.get("llm_timeout_seconds", 180))
+            llm_max_retries = int(self.config.get("llm_max_retries", 5))
+            llm_max_tokens = int(self.config.get("llm_max_tokens", 2048))
+            llm_extra_body = None
+            llm_default_headers = self.config.get("llm_default_headers")
+            if provider == "vllm" and self.config.get("vllm_disable_thinking", True):
+                llm_extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
+            print(
+                "DEBUG: Initializing LLM "
+                f"provider='{provider}', backend_url='{self.config['backend_url']}', "
+                f"quick_model='{self.config['quick_think_llm']}', deep_model='{self.config['deep_think_llm']}', "
+                f"timeout={llm_timeout}, max_retries={llm_max_retries}, max_tokens={llm_max_tokens}"
+            )
             self.deep_thinking_llm = ChatOpenAI(
                 model=self.config["deep_think_llm"],
                 openai_api_base=self.config["backend_url"],
                 openai_api_key=api_key,
+                timeout=llm_timeout,
+                max_retries=llm_max_retries,
+                max_completion_tokens=llm_max_tokens,
+                extra_body=llm_extra_body,
+                default_headers=llm_default_headers,
             )
             self.quick_thinking_llm = ChatOpenAI(
                 model=self.config["quick_think_llm"],
                 openai_api_base=self.config["backend_url"],
                 openai_api_key=api_key,
+                timeout=llm_timeout,
+                max_retries=llm_max_retries,
+                max_completion_tokens=llm_max_tokens,
+                extra_body=llm_extra_body,
+                default_headers=llm_default_headers,
             )
         elif provider == "anthropic":
             self.deep_thinking_llm = ChatAnthropic(model=self.config["deep_think_llm"], base_url=self.config["backend_url"])

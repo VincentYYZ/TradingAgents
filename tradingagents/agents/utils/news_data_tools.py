@@ -1,6 +1,22 @@
+import re
+
 from langchain_core.tools import tool
 from typing import Annotated
 from tradingagents.dataflows.interface import route_to_vendor
+
+
+def _coerce_a_share_ticker(ticker: str) -> str:
+    raw = str(ticker or "").strip().upper()
+    prefix_match = re.search(r"\b(SH|SZ|SS)(\d{6})\b", raw)
+    if prefix_match:
+        return prefix_match.group(2)
+    suffix_match = re.search(r"\b(\d{6})\.(SH|SZ|SS)\b", raw)
+    if suffix_match:
+        return suffix_match.group(1)
+    base_match = re.search(r"\b\d{6}\b", raw)
+    if base_match:
+        return base_match.group(0)
+    return raw
 
 @tool
 def get_news(
@@ -18,7 +34,18 @@ def get_news(
     Returns:
         str: A formatted string containing news data
     """
-    return route_to_vendor("get_news", ticker, start_date, end_date)
+    normalized_ticker = _coerce_a_share_ticker(ticker)
+    try:
+        return route_to_vendor("get_news", normalized_ticker, start_date, end_date)
+    except Exception as exc:
+        message = str(exc)
+        if "Unsupported A-share ticker format" in message or "All vendor implementations failed for method 'get_news'" in message:
+            return (
+                f"No company news data is available for ticker input '{ticker}' "
+                f"between {start_date} and {end_date}. "
+                f"The news tool expected a 6-digit A-share code, for example 600519."
+            )
+        raise
 
 @tool
 def get_global_news(

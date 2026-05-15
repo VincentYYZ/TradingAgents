@@ -1,0 +1,32 @@
+{
+  "providers": {
+    "openai": {
+      "backend_url": "https://api.openai.com/v1",
+      "quick_model": "gpt-4o-mini",
+      "deep_model": "o4-mini",
+      "embedding_model": "text-embedding-3-small",
+      "api_key": ""
+    },
+    "luchikey_openai": {
+      "backend_url": "https://sub2api.luchikey.cn/v1",
+      "quick_model": "gpt-5.5",
+      "deep_model": "gpt-5.5",
+      "embedding_model": "text-embedding-3-small",
+      "api_key": ""
+    },
+    "lucen_openai": {
+      "backend_url": "https://lucen.cc",
+      "quick_model": "gpt-5.5",
+      "deep_model": "gpt-5.5",
+      "embedding_model": "text-embedding-3-small",
+      "api_key": ""
+    },
+    "vllm": {
+      "backend_url": "http://127.0.0.1:8000/v1",
+      "quick_model": "Qwen3.6-27B",
+      "deep_model": "Qwen3.6-27B",
+      "embedding_model": "",
+      "api_key": "EMPTY"
+    }
+  }
+}

@@ -49,6 +49,12 @@ PROVIDER_DEFAULTS = {
         "deep_model": "gpt-5.5",
         "embedding_model": "text-embedding-3-small",
     },
+    "luchikey_openai": {
+        "backend_url": "https://sub2api.luchikey.cn/v1",
+        "quick_model": "gpt-5.5",
+        "deep_model": "gpt-5.5",
+        "embedding_model": "text-embedding-3-small",
+    },
     "vllm": {
         "backend_url": "http://127.0.0.1:8000/v1",
         "quick_model": "Qwen3.6-27B",
@@ -62,6 +68,64 @@ PROVIDER_DEFAULTS = {
         "embedding_model": "nomic-embed-text",
     },
 }
+
+
+LLM_PROVIDERS_LOCAL_PATH = Path(__file__).resolve().parent / "llm_providers.local.json"
+LLM_PROVIDERS_EXAMPLE_PATH = Path(__file__).resolve().parent / "llm_providers.example.json"
+
+
+def _read_llm_provider_file(path, include_api_keys):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"WARNING: Failed to load LLM provider config from {path}: {exc}")
+        return {}
+    providers = data.get("providers", data)
+    if not isinstance(providers, dict):
+        return {}
+    result = {}
+    for name, values in providers.items():
+        if not isinstance(values, dict):
+            continue
+        cleaned = dict(values)
+        if not include_api_keys:
+            cleaned.pop("api_key", None)
+        result[str(name)] = cleaned
+    return result
+
+
+def load_llm_provider_overrides():
+    merged = {}
+    for path, include_api_keys in (
+        (LLM_PROVIDERS_EXAMPLE_PATH, False),
+        (LLM_PROVIDERS_LOCAL_PATH, True),
+    ):
+        if not path.exists():
+            continue
+        for name, values in _read_llm_provider_file(path, include_api_keys).items():
+            merged.setdefault(name, {}).update(values)
+    return merged
+
+
+LLM_PROVIDER_OVERRIDES = load_llm_provider_overrides()
+
+for provider_name, provider_values in LLM_PROVIDER_OVERRIDES.items():
+    defaults = PROVIDER_DEFAULTS.setdefault(provider_name, {})
+    for key in ("backend_url", "quick_model", "deep_model", "embedding_model"):
+        if provider_values.get(key) is not None:
+            defaults[key] = provider_values.get(key, "")
+
+
+def get_provider_config(provider):
+    config = dict(PROVIDER_DEFAULTS.get(provider, {}))
+    config.update(LLM_PROVIDER_OVERRIDES.get(provider, {}))
+    return config
+
+
+def get_provider_api_key(provider):
+    config = get_provider_config(provider)
+    return (config.get("api_key") or "").strip()
+
 
 ANALYST_LABELS = {
     "market": "市场分析师",
@@ -430,22 +494,41 @@ class RunCollector:
 
 def build_run_config(market_profile, ticker, trade_date, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, results_dir, api_key=None):
     config = apply_market_profile(DEFAULT_CONFIG.copy(), market_profile)
+    provider_config = get_provider_config(llm_provider)
     config["llm_provider"] = llm_provider
     config["backend_url"] = backend_url
     config["quick_think_llm"] = quick_model
     config["deep_think_llm"] = deep_model
+    if llm_provider == "vllm":
+        config["llm_timeout_seconds"] = max(float(config.get("llm_timeout_seconds", 180)), 600)
+        config["llm_max_tokens"] = min(int(config.get("llm_max_tokens", 2048)), 2048)
+        config["vllm_disable_thinking"] = True
+    if llm_provider == "luchikey_openai":
+        config["backend_url"] = backend_url.rstrip("/") if backend_url else provider_config.get("backend_url", PROVIDER_DEFAULTS["luchikey_openai"]["backend_url"])
+        if not config["backend_url"].endswith("/v1"):
+            config["backend_url"] = f"{config['backend_url']}/v1"
+        config["llm_default_headers"] = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+        }
     config["max_debate_rounds"] = int(research_depth)
     config["max_risk_discuss_rounds"] = int(research_depth)
     config["results_dir"] = results_dir or DEFAULT_CONFIG["results_dir"]
     config["tool_vendors"] = {}
     if embedding_model:
         config["embedding_model"] = embedding_model
-    if api_key:
-        config["api_key"] = api_key
+    resolved_api_key = (api_key or "").strip() or get_provider_api_key(llm_provider)
+    if resolved_api_key:
+        config["api_key"] = resolved_api_key
     return config
 
 
-def build_config_json(market_profile, ticker, trade_date, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, results_dir, md_export_dir):
+def build_config_json(*args):
+    if len(args) == 11:
+        market_profile, ticker, trade_date, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, results_dir = args
+        md_export_dir = ""
+    else:
+        market_profile, ticker, trade_date, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, results_dir, md_export_dir = args
     payload = {
         "ticker": (ticker or "").strip().upper(),
         "trade_date": (trade_date or "").strip(),
@@ -464,6 +547,10 @@ def build_config_json(market_profile, ticker, trade_date, llm_provider, backend_
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
+def provider_default_value(provider, key, fallback=""):
+    return get_provider_config(provider).get(key, fallback)
+
+
 def analyst_choices_for_market(market_profile):
     supported = MARKET_PROFILES[market_profile]["supported_analysts"]
     return [(ANALYST_LABELS[item], item) for item in supported]
@@ -471,26 +558,29 @@ def analyst_choices_for_market(market_profile):
 
 def load_config_file(file_path):
     if not file_path:
-        return [gr.update() for _ in range(12)]
+        return [gr.update() for _ in range(13)]
     data = json.loads(Path(file_path).read_text())
     market = data.get("market_profile", "cn_a_share")
     supported = MARKET_PROFILES.get(market, MARKET_PROFILES["cn_a_share"])["supported_analysts"]
     selected = [item for item in data.get("selected_analysts", supported[:1]) if item in supported]
     if not selected:
         selected = supported[:1]
+    provider = data.get("llm_provider", "ollama")
+    provider_config = get_provider_config(provider)
     return [
         data.get("market_profile", "cn_a_share"),
         data.get("ticker", MARKET_PROFILES.get(market, MARKET_PROFILES["cn_a_share"])["default_ticker"]),
         data.get("trade_date", datetime.now().strftime("%Y-%m-%d")),
         data.get("results_dir", DEFAULT_CONFIG["results_dir"]),
         data.get("md_export_dir", DEFAULT_CONFIG.get("md_export_dir", "")),
-        data.get("llm_provider", "ollama"),
-        data.get("backend_url", PROVIDER_DEFAULTS[data.get("llm_provider", "ollama")]["backend_url"]),
-        data.get("quick_think_llm", PROVIDER_DEFAULTS[data.get("llm_provider", "ollama")]["quick_model"]),
-        data.get("deep_think_llm", PROVIDER_DEFAULTS[data.get("llm_provider", "ollama")]["deep_model"]),
-        data.get("embedding_model", PROVIDER_DEFAULTS[data.get("llm_provider", "ollama")]["embedding_model"]),
+        provider,
+        data.get("backend_url", provider_config.get("backend_url", "")),
+        data.get("quick_think_llm", provider_config.get("quick_model", "")),
+        data.get("deep_think_llm", provider_config.get("deep_model", "")),
+        data.get("embedding_model", provider_config.get("embedding_model", "")),
         int(data.get("max_debate_rounds", 1)),
         gr.update(choices=analyst_choices_for_market(market), value=selected),
+        get_provider_api_key(provider) or os.getenv("OPENAI_API_KEY", ""),
     ]
 
 
@@ -504,8 +594,62 @@ def apply_market_defaults(market_profile, selected_analysts):
 
 
 def apply_provider_defaults(provider):
-    defaults = PROVIDER_DEFAULTS[provider]
-    return defaults["backend_url"], defaults["quick_model"], defaults["deep_model"], defaults["embedding_model"]
+    defaults = get_provider_config(provider)
+    api_key = get_provider_api_key(provider) or os.getenv("OPENAI_API_KEY", "")
+    return defaults["backend_url"], defaults["quick_model"], defaults["deep_model"], defaults["embedding_model"], api_key
+
+
+def fetch_sector_fund_flow_chart(indicator, sector_type, top_n):
+    try:
+        import akshare as ak
+        import pandas as pd
+    except Exception as exc:
+        raise gr.Error(f"缺少板块资金流依赖：{exc}")
+
+    indicator = indicator or "今日"
+    sector_type = sector_type or "行业资金流"
+    top_n = int(top_n or 20)
+
+    try:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            df = ak.stock_sector_fund_flow_rank(indicator=indicator, sector_type=sector_type)
+    except Exception as exc:
+        raise gr.Error(f"获取板块资金流失败：{exc}")
+
+    if df is None or df.empty:
+        raise gr.Error("未获取到板块资金流数据")
+
+    df = df.copy()
+    name_col = next((col for col in ["名称", "板块名称", "行业", "概念"] if col in df.columns), df.columns[0])
+    flow_col = next((col for col in ["主力净流入-净额", "主力净流入", "今日主力净流入-净额", "净额"] if col in df.columns), None)
+    pct_col = next((col for col in ["涨跌幅", "今日涨跌幅", "涨跌幅%"] if col in df.columns), None)
+
+    if flow_col is None:
+        candidate_cols = [col for col in df.columns if "净流入" in str(col) or "净额" in str(col)]
+        if candidate_cols:
+            flow_col = candidate_cols[0]
+    if flow_col is None:
+        raise gr.Error(f"未找到主力净流入字段，当前字段：{', '.join(map(str, df.columns))}")
+
+    chart_df = df[[name_col, flow_col] + ([pct_col] if pct_col else [])].copy()
+    chart_df[flow_col] = pd.to_numeric(chart_df[flow_col], errors="coerce")
+    chart_df = chart_df.dropna(subset=[flow_col])
+    chart_df["主力净流入_亿元"] = chart_df[flow_col] / 100000000
+    chart_df = chart_df.rename(columns={name_col: "板块"})
+
+    top_in = chart_df.sort_values("主力净流入_亿元", ascending=False).head(top_n)
+    top_out = chart_df.sort_values("主力净流入_亿元", ascending=True).head(top_n)
+    display_df = pd.concat([top_in, top_out], ignore_index=True).drop_duplicates(subset=["板块"])
+    display_df = display_df.sort_values("主力净流入_亿元", ascending=True)
+
+    table_cols = ["板块", "主力净流入_亿元"]
+    if pct_col:
+        table_cols.append(pct_col)
+    table_df = display_df[table_cols].sort_values("主力净流入_亿元", ascending=False)
+    table_df["主力净流入_亿元"] = table_df["主力净流入_亿元"].round(2)
+
+    title = f"{sector_type} · {indicator} · 主力资金流向 Top {top_n}"
+    return display_df, table_df, title
 
 
 def capture_qa_context(full_report_md, llm_provider, backend_url, quick_model, deep_model, api_key):
@@ -515,7 +659,7 @@ def capture_qa_context(full_report_md, llm_provider, backend_url, quick_model, d
         "llm_provider": llm_provider,
         "backend_url": backend_url,
         "model": deep_model or quick_model,
-        "api_key": (api_key or "").strip() or os.getenv("OPENAI_API_KEY", ""),
+        "api_key": (api_key or "").strip() or get_provider_api_key(llm_provider) or os.getenv("OPENAI_API_KEY", ""),
     }
 
 
@@ -533,12 +677,23 @@ def answer_report_question(user_message, history, qa_context):
     api_key = qa_context.get("api_key") or os.getenv("OPENAI_API_KEY", "ollama")
 
     try:
-        if provider in {"openai", "ollama", "openrouter", "vllm", "lucen_openai"}:
+        if provider in {"openai", "ollama", "openrouter", "vllm", "lucen_openai", "luchikey_openai"}:
             from openai import OpenAI
 
+            qa_backend_url = qa_context["backend_url"]
+            default_headers = None
+            if provider == "luchikey_openai":
+                qa_backend_url = qa_backend_url.rstrip("/")
+                if not qa_backend_url.endswith("/v1"):
+                    qa_backend_url = f"{qa_backend_url}/v1"
+                default_headers = {
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json",
+                }
             client = OpenAI(
-                base_url=qa_context["backend_url"],
+                base_url=qa_backend_url,
                 api_key=api_key,
+                default_headers=default_headers,
             )
 
             system_prompt = (
@@ -638,41 +793,42 @@ def build_full_report_markdown(collector):
     return "\n".join(lines).strip()
 
 
-def export_full_report_markdown(collector, md_path):
-    export_dir = (collector.selections.get("md_export_dir") or "").strip()
+def _resolve_export_dir(export_dir, warning_collector=None):
+    export_dir = (export_dir or "").strip()
     if not export_dir:
-        collector.exported_md_path = str(md_path)
-        return
+        return None
 
-    # Expand ~ to home directory
     export_dir = os.path.expanduser(export_dir)
-
-    # Detect Windows drive-letter paths (e.g. D:/xxx or D:\\xxx)
     win_drive_match = re.match(r'^([a-zA-Z]):[/\\]', export_dir)
     if win_drive_match:
         drive_letter = win_drive_match.group(1).lower()
         wsl_mount = f"/mnt/{drive_letter}"
         if os.path.isdir(wsl_mount):
-            # WSL environment: map D:/xxx -> /mnt/d/xxx
             export_dir = wsl_mount + export_dir[2:]
         else:
-            # Pure Linux: treat as absolute to avoid creating a "D:" folder inside project
-            # Inform user in the run messages
             abs_path = str(Path(export_dir).resolve())
-            collector.add_message(
-                "系统",
-                f"检测到 Windows 路径 '{collector.selections.get('md_export_dir')}'，当前为非 WSL Linux 环境。"
-                f"文件将保存到绝对路径：{abs_path}。如需保存到 Windows 盘符，请使用 WSL 或填写 Linux 绝对路径（如 /home/xxx/reports）。"
-            )
+            if warning_collector is not None:
+                warning_collector.add_message(
+                    "系统",
+                    f"检测到 Windows 路径 '{export_dir}'，当前为非 WSL Linux 环境。"
+                    f"文件将保存到绝对路径：{abs_path}。如需保存到 Windows 盘符，请使用 WSL 或填写 Linux 绝对路径（如 /home/xxx/reports）。"
+                )
             export_dir = abs_path
 
     target_dir = Path(export_dir)
-    # Ensure absolute path so it never falls back to project directory
     if not target_dir.is_absolute():
         target_dir = target_dir.resolve()
+    return target_dir
 
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target_path = target_dir / md_path.name
+
+def export_full_report_markdown(collector, md_path):
+    export_dir = _resolve_export_dir(collector.selections.get("md_export_dir"), warning_collector=collector)
+    if export_dir is None:
+        collector.exported_md_path = str(md_path)
+        return
+
+    export_dir.mkdir(parents=True, exist_ok=True)
+    target_path = export_dir / md_path.name
     target_path.write_text(collector.full_report)
     collector.exported_md_path = str(target_path)
 
@@ -972,6 +1128,42 @@ def _build_batch_summary_md(batch_rows, current_idx, total):
     return "\n".join(lines)
 
 
+def _write_batch_report_markdown(batch_rows, batch_reports, trade_date, results_dir, md_export_dir):
+    target_dir = _resolve_export_dir(md_export_dir) or Path(results_dir or DEFAULT_CONFIG["results_dir"]).resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    target_path = target_dir / f"batch_report_{trade_date}_{timestamp}.md"
+
+    lines = [
+        "# 批量分析汇总报告",
+        "",
+        f"- 分析日期：{trade_date}",
+        f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 股票数量：{len(batch_rows)}",
+        "",
+        "## 批量结果概览",
+        "",
+        _build_batch_summary_md(batch_rows, len(batch_rows), len(batch_rows)),
+        "",
+    ]
+
+    for idx, report in enumerate(batch_reports, 1):
+        lines.extend([
+            "---",
+            "",
+            f"# {idx}. {report.get('name') or report.get('ticker')}",
+            "",
+            f"- 股票代码：{report.get('ticker', '')}",
+            f"- 决策：{report.get('decision', '—')}",
+            "",
+            report.get("full_report", "").strip(),
+            "",
+        ])
+
+    target_path.write_text("\n".join(lines).strip() + "\n")
+    return str(target_path)
+
+
 def run_batch_analysis(market_profile, tickers_text, trade_date, results_dir, md_export_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key):
     """批量分析入口：遍历多个 ticker，逐个调用单股分析逻辑，累计可下载文件。"""
     raw_items = parse_ticker_list(tickers_text)
@@ -995,6 +1187,7 @@ def run_batch_analysis(market_profile, tickers_text, trade_date, results_dir, md
 
     batch_rows = []
     batch_files = []
+    batch_reports = []
     last_output = None
 
     for idx, entry in enumerate(resolved, 1):
@@ -1041,17 +1234,14 @@ def run_batch_analysis(market_profile, tickers_text, trade_date, results_dir, md
             batch_rows[-1]["industry"] = industry or "—"
             batch_rows[-1]["concepts"] = concepts or "—"
 
-            ticker_files = []
-            if exported_md_path and Path(exported_md_path).exists():
-                ticker_files.append(exported_md_path)
-            if out_dir:
-                full_md_candidates = sorted(Path(out_dir).glob("full_report*.md"))
-                if full_md_candidates:
-                    candidate = str(full_md_candidates[0])
-                    if candidate not in ticker_files:
-                        ticker_files.append(candidate)
-            batch_files.extend(ticker_files)
-            batch_rows[-1]["status"] = "success" if ticker_files else "failed"
+            batch_reports.append({
+                "ticker": ticker,
+                "name": name,
+                "decision": batch_rows[-1]["decision"],
+                "full_report": full_report_md,
+                "exported_md_path": exported_md_path,
+            })
+            batch_rows[-1]["status"] = "success" if full_report_md else "failed"
             summary_md = _build_batch_summary_md(batch_rows, idx, len(resolved))
             yield last_output + (summary_md, batch_files)
 
@@ -1061,6 +1251,12 @@ def run_batch_analysis(market_profile, tickers_text, trade_date, results_dir, md
         success_count = sum(1 for r in batch_rows if r["status"] == "success")
         final_tuple[0] = f"批量分析完成：{success_count}/{len(resolved)} 成功"
         summary_md = _build_batch_summary_md(batch_rows, len(resolved), len(resolved))
+        batch_files = []
+        if batch_reports:
+            try:
+                batch_files = [_write_batch_report_markdown(batch_rows, batch_reports, trade_date, results_dir, md_export_dir)]
+            except Exception:
+                batch_files = []
         yield tuple(final_tuple) + (summary_md, batch_files)
 
 
@@ -1098,11 +1294,25 @@ def _run_single_analysis(market_profile, ticker, trade_date, results_dir, md_exp
         "research_depth": int(research_depth),
         "analysts": list(analysts),
     }
+    if selections["llm_provider"] == "vllm" and (
+        "lucen.cc" in selections["backend_url"].lower()
+        or selections["quick_model"] == PROVIDER_DEFAULTS["lucen_openai"]["quick_model"]
+        or selections["deep_model"] == PROVIDER_DEFAULTS["lucen_openai"]["deep_model"]
+    ):
+        raise gr.Error(
+            "LLM 配置不一致：你选择了 vLLM，但后端地址或模型仍然是 lucen_openai 的默认值。"
+            "请点击 LLM 提供商下拉框重新选择 vllm，确认后端地址为 http://127.0.0.1:8000/v1，"
+            "并确认快速/深度模型为本地 vLLM 模型名。"
+        )
     collector = RunCollector(selections)
     collector.run_message = "正在初始化分析任务..."
     collector.add_message("系统", f"股票代码：{ticker}（{display_name}）")
     collector.add_message("系统", f"分析日期：{trade_date}")
     collector.add_message("系统", f"已选分析师：{', '.join(ANALYST_LABELS[item] for item in analysts)}")
+    collector.add_message("系统", f"LLM 提供商：{selections['llm_provider']}")
+    collector.add_message("系统", f"LLM 后端地址：{selections['backend_url']}")
+    collector.add_message("系统", f"快速模型：{selections['quick_model']}")
+    collector.add_message("系统", f"深度模型：{selections['deep_model']}")
     collector.mark_initial_status()
     log_buffer = StreamBuffer()
     yield collector.output_tuple(log_buffer.content())
@@ -1179,11 +1389,11 @@ def build_app():
                 results_dir = gr.Textbox(label="结果目录", value=DEFAULT_CONFIG["results_dir"])
                 md_export_dir = gr.Textbox(label="MD 自动保存目录（本地文件夹路径）", value=DEFAULT_CONFIG.get("md_export_dir", ""), placeholder="例如：/home/yourname/reports；留空则仅保存在结果目录中")
                 llm_provider = gr.Dropdown(label="LLM 提供商", choices=provider_choices, value=default_provider)
-                backend_url = gr.Textbox(label="后端地址", value=PROVIDER_DEFAULTS[default_provider]["backend_url"])
-                api_key = gr.Textbox(label="API Key", type="password", value=os.getenv("OPENAI_API_KEY", ""))
-                quick_model = gr.Textbox(label="快速模型", value=PROVIDER_DEFAULTS[default_provider]["quick_model"])
-                deep_model = gr.Textbox(label="深度模型", value=PROVIDER_DEFAULTS[default_provider]["deep_model"])
-                embedding_model = gr.Textbox(label="Embedding 模型", value=PROVIDER_DEFAULTS[default_provider]["embedding_model"])
+                backend_url = gr.Textbox(label="后端地址", value=get_provider_config(default_provider)["backend_url"])
+                api_key = gr.Textbox(label="API Key", type="password", value=get_provider_api_key(default_provider) or os.getenv("OPENAI_API_KEY", ""))
+                quick_model = gr.Textbox(label="快速模型", value=get_provider_config(default_provider)["quick_model"])
+                deep_model = gr.Textbox(label="深度模型", value=get_provider_config(default_provider)["deep_model"])
+                embedding_model = gr.Textbox(label="Embedding 模型", value=get_provider_config(default_provider)["embedding_model"])
                 research_depth = gr.Dropdown(label="研究深度", choices=[1, 3, 5], value=1)
                 analysts = gr.CheckboxGroup(label="分析师团队", choices=analyst_choices_for_market(default_market), value=["market", "news", "fundamentals"])
                 run_btn = gr.Button("启动分析", variant="primary", size="lg")
@@ -1202,6 +1412,36 @@ def build_app():
                         messages = gr.Textbox(lines=18)
                     with gr.Tab("工具调用"):
                         tools = gr.Textbox(lines=18)
+                    with gr.Tab("板块资金流"):
+                        gr.Markdown("展示 A 股行业、概念、地域板块的主力资金流入/流出，不写入最终报告。")
+                        with gr.Row():
+                            sector_indicator = gr.Dropdown(
+                                label="周期",
+                                choices=["今日", "5日", "10日"],
+                                value="今日",
+                            )
+                            sector_type = gr.Dropdown(
+                                label="板块类型",
+                                choices=["行业资金流", "概念资金流", "地域资金流"],
+                                value="行业资金流",
+                            )
+                            sector_top_n = gr.Slider(
+                                label="流入/流出 Top N",
+                                minimum=5,
+                                maximum=50,
+                                value=20,
+                                step=1,
+                            )
+                            sector_refresh_btn = gr.Button("刷新板块资金流", variant="primary")
+                        sector_chart_title = gr.Markdown("尚未加载板块资金流数据")
+                        sector_flow_plot = gr.BarPlot(
+                            x="主力净流入_亿元",
+                            y="板块",
+                            title="板块资金流",
+                            tooltip=["板块", "主力净流入_亿元"],
+                            height=560,
+                        )
+                        sector_flow_table = gr.Dataframe(label="板块资金流明细", interactive=False)
                     with gr.Tab("报告"):
                         market_report = gr.Markdown(label="市场分析")
                         sentiment_report = gr.Markdown(label="社交情绪分析")
@@ -1240,11 +1480,16 @@ def build_app():
         config_file.change(
             fn=load_config_file,
             inputs=config_file,
-            outputs=[market_profile, ticker, trade_date, results_dir, md_export_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts],
+            outputs=[market_profile, ticker, trade_date, results_dir, md_export_dir, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts, api_key],
         )
         market_profile.change(fn=apply_market_defaults, inputs=[market_profile, analysts], outputs=[ticker, analysts])
-        llm_provider.change(fn=apply_provider_defaults, inputs=llm_provider, outputs=[backend_url, quick_model, deep_model, embedding_model])
+        llm_provider.change(fn=apply_provider_defaults, inputs=llm_provider, outputs=[backend_url, quick_model, deep_model, embedding_model, api_key])
         preset_btn.click(fn=apply_cn_ollama_preset, outputs=[market_profile, ticker, llm_provider, backend_url, quick_model, deep_model, embedding_model, research_depth, analysts])
+        sector_refresh_btn.click(
+            fn=fetch_sector_fund_flow_chart,
+            inputs=[sector_indicator, sector_type, sector_top_n],
+            outputs=[sector_flow_plot, sector_flow_table, sector_chart_title],
+        )
 
         run_btn.click(
             fn=run_batch_analysis,

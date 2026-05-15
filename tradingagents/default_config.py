@@ -10,12 +10,16 @@ DEFAULT_CONFIG = {
     ),
     "market_profile": "us_equity",
     # Markdown auto-save directory
-    "md_export_dir": r"D:\Others\theA",
+    "md_export_dir": "./results/exported_md",
     # LLM settings
     "llm_provider": "openai",
     "deep_think_llm": "o4-mini",
     "quick_think_llm": "gpt-4o-mini",
     "backend_url": "https://api.openai.com/v1",
+    "llm_timeout_seconds": 180,
+    "llm_max_retries": 5,
+    "llm_max_tokens": 2048,
+    "vllm_disable_thinking": True,
     # Debate and discussion settings
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,
