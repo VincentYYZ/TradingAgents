@@ -834,32 +834,17 @@ def export_full_report_markdown(collector, md_path):
 
 
 def persist_outputs(collector, logs, results_dir):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path(results_dir or DEFAULT_CONFIG["results_dir"]) / collector.selections["ticker"] / collector.selections["trade_date"] / f"gradio_app_{timestamp}"
-    reports_dir = output_dir / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "config_used.json").write_text(json.dumps(collector.selections, ensure_ascii=False, indent=2))
-    (output_dir / "logs.txt").write_text(logs)
-    (output_dir / "messages.txt").write_text("\n".join(collector.messages))
-    (output_dir / "tool_calls.txt").write_text("\n".join(collector.tools))
+    output_dir = Path(results_dir or DEFAULT_CONFIG["results_dir"]).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
     collector.full_report = build_full_report_markdown(collector)
     safe_name = _safe_filename_part(collector.selections.get("display_name") or collector.selections["ticker"])
     safe_ticker = _safe_filename_part(collector.selections["ticker"])
-    md_filename_parts = [p for p in ["full_report", safe_name, safe_ticker] if p]
+    safe_date = _safe_filename_part(collector.selections["trade_date"])
+    md_filename_parts = [p for p in [safe_date, safe_name, safe_ticker] if p]
     md_path = output_dir / ("_".join(md_filename_parts) + ".md")
     md_path.write_text(collector.full_report)
-    for key, value in collector.reports.items():
-        if value:
-            (reports_dir / f"{key}.md").write_text(value)
-    if collector.final_state is not None:
-        (output_dir / "final_state.json").write_text(json.dumps(collector.final_state, ensure_ascii=False, indent=2, default=str))
-        (output_dir / "processed_decision.txt").write_text(str(collector.decision))
     collector.output_dir = str(output_dir)
-    try:
-        export_full_report_markdown(collector, md_path)
-    except Exception as exc:
-        collector.exported_md_path = str(md_path)
-        collector.add_message("系统", f"MD 额外导出失败：{exc}")
+    collector.exported_md_path = str(md_path)
 
 
 _A_SHARE_NAME_MAP_CACHE = None
@@ -1241,6 +1226,8 @@ def run_batch_analysis(market_profile, tickers_text, trade_date, results_dir, md
                 "full_report": full_report_md,
                 "exported_md_path": exported_md_path,
             })
+            if exported_md_path:
+                batch_files.append(exported_md_path)
             batch_rows[-1]["status"] = "success" if full_report_md else "failed"
             summary_md = _build_batch_summary_md(batch_rows, idx, len(resolved))
             yield last_output + (summary_md, batch_files)
@@ -1251,12 +1238,6 @@ def run_batch_analysis(market_profile, tickers_text, trade_date, results_dir, md
         success_count = sum(1 for r in batch_rows if r["status"] == "success")
         final_tuple[0] = f"批量分析完成：{success_count}/{len(resolved)} 成功"
         summary_md = _build_batch_summary_md(batch_rows, len(resolved), len(resolved))
-        batch_files = []
-        if batch_reports:
-            try:
-                batch_files = [_write_batch_report_markdown(batch_rows, batch_reports, trade_date, results_dir, md_export_dir)]
-            except Exception:
-                batch_files = []
         yield tuple(final_tuple) + (summary_md, batch_files)
 
 
